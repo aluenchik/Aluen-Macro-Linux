@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 # ================================================================
-#   Sol's RNG — Biome Detector + Discord Webhook  v3.0
-#   Platform    : Linux (Wayland) + Sober
 #   Dependencies: curl, xdotool (for AntiAFK)
 # ================================================================
 

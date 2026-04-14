@@ -83,9 +83,8 @@ start_monitoring() {
     echo ""
 
     local current_biome=""
-    # First tick fires after 30s so the user can quickly confirm AntiAFK works,
-    # then normal ANTIAFK_INTERVAL takes over.
-    ANTIAFK_LAST=$(( $(date +%s) - ANTIAFK_INTERVAL + 30 ))
+    # First tick fires immediately on startup.
+    ANTIAFK_LAST=0
 
     # FIFO for line passing
     local fifo
