@@ -25,7 +25,7 @@ Detects biomes in real time via Sober logs and sends Discord webhook notificatio
 | `curl` | Discord webhooks |
 | `xdotool` | AntiAFK, Merchant, inventory automation |
 | `python3` + `tesseract` | Merchant OCR (optional, for auto-detect & auto-buy) |
-| `spectacle` / `grim` / `scrot` | Screenshots for Discord (optional) |
+| `spectacle` / `grim` / `scrot` | Screenshots for shop detect |
 | `python3-pillow` / `Pillow` | Logo display in GUI (optional) |
 
 > **Note:** xdotool requires X11. Enable the X11 windowing system for Sober in **Flatseal**.
