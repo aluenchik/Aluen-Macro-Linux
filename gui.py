@@ -599,7 +599,7 @@ class App(tk.Tk):
     }
 
     def _tpl_load(self):
-        data = {"1920x1080 #not fullscreen": self._DEFAULT_TPL}
+        data = {"1920x1080": self._DEFAULT_TPL}
         if os.path.exists(TEMPLATES_FILE):
             try:
                 saved = json.loads(open(TEMPLATES_FILE).read())
@@ -644,7 +644,7 @@ class App(tk.Tk):
         if not name:
             messagebox.showwarning("Save template", "Enter a template name first.")
             return
-        if name == "1920x1080 #not fullscreen":
+        if name == "1920x1080":
             messagebox.showinfo("Save template", "Cannot overwrite the default template.")
             return
         tpls = self._tpl_load()
@@ -659,7 +659,7 @@ class App(tk.Tk):
         name = self._tpl_var.get()
         if not name:
             return
-        if name == "1920x1080 #not fullscreen":
+        if name == "1920x1080":
             messagebox.showinfo("Delete template", "Cannot delete the default template.")
             return
         if not messagebox.askyesno("Delete template", f'Delete "{name}"?'):
