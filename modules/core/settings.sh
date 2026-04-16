@@ -95,28 +95,36 @@ MERCHANT_ENABLED=false
 MERCHANT_INTERVAL=300
 
 # Calibration points — defaults for 1920x1080, recalibrate if UI differs
-MERCHANT_CAL_INV_X=29
-MERCHANT_CAL_INV_Y=516
-MERCHANT_CAL_ITEMS_TAB_X=1258
-MERCHANT_CAL_ITEMS_TAB_Y=347
-MERCHANT_CAL_SEARCH_X=1002
-MERCHANT_CAL_SEARCH_Y=386
-MERCHANT_CAL_ITEM_X=841
-MERCHANT_CAL_ITEM_Y=484
-MERCHANT_CAL_USE_X=682
-MERCHANT_CAL_USE_Y=591
-MERCHANT_CAL_SHOP_X=637
-MERCHANT_CAL_SHOP_Y=933
-MERCHANT_CAL_DIALOG_X=792
-MERCHANT_CAL_DIALOG_Y=861
-MERCHANT_CAL_BUY_X=1122
-MERCHANT_CAL_BUY_Y=667
+MERCHANT_CAL_INV_X=35
+MERCHANT_CAL_INV_Y=510
+MERCHANT_CAL_ITEMS_TAB_X=1247
+MERCHANT_CAL_ITEMS_TAB_Y=340
+MERCHANT_CAL_SEARCH_X=960
+MERCHANT_CAL_SEARCH_Y=368
+MERCHANT_CAL_ITEM_X=846
+MERCHANT_CAL_ITEM_Y=463
+MERCHANT_CAL_USE_X=683
+MERCHANT_CAL_USE_Y=574
+MERCHANT_CAL_SHOP_X=589
+MERCHANT_CAL_SHOP_Y=936
+MERCHANT_CAL_DIALOG_X=773
+MERCHANT_CAL_DIALOG_Y=849
+MERCHANT_CAL_BUY_X=1041
+MERCHANT_CAL_BUY_Y=648
+MERCHANT_CAL_MAX_X=1300
+MERCHANT_CAL_MAX_Y=614
 
 # Items to auto-buy from Mari (match shop tab text, any case)
 MARI_BUY_ITEMS=()
 
+# Items from Mari to buy with max quantity
+MARI_MAX_ITEMS=()
+
 # Items to auto-buy from Jester (match shop tab text, any case)
 JESTER_BUY_ITEMS=()
+
+# Items from Jester to buy with max quantity
+JESTER_MAX_ITEMS=()
 
 
 # ┌─────────────────────────────────────────┐
@@ -132,6 +140,13 @@ STRANGE_CONTROLLER_INTERVAL=1200   # 20 minutes
 
 BIOME_RANDOMIZER_ENABLED=false
 BIOME_RANDOMIZER_INTERVAL=2100   # 35 minutes
+
+# ┌─────────────────────────────────────────┐
+# │          CUSTOM USE ITEMS               │
+# └─────────────────────────────────────────┘
+
+# Format: "Item Name|cooldown_seconds"
+CUSTOM_USE_ITEMS=()
 EOF
     echo "[+] Default config created: $CONFIG_FILE"
 }
@@ -168,137 +183,3 @@ save_config_value() {
     fi
 }
 
-# ┌─────────────────────────────────────────┐
-# │           EDIT SETTINGS                 │
-# └─────────────────────────────────────────┘
-
-edit_webhook_url() {
-    clear
-    echo "╔══════════════════════════════════════════╗"
-    echo "║          SET WEBHOOK URL                 ║"
-    echo "╚══════════════════════════════════════════╝"
-    echo ""
-    echo "Current Webhook URL:"
-    echo "$WEBHOOK_URL"
-    echo ""
-    read -p "Enter new Discord Webhook URL (Enter to keep current): " new_url
-
-    if [ -n "$new_url" ]; then
-        save_config_value "WEBHOOK_URL" "$new_url"
-        echo ""
-        echo "[✓] Webhook URL updated!"
-    else
-        echo ""
-        echo "[i] Setting unchanged"
-    fi
-    echo ""
-    read -p "Press Enter to continue..."
-}
-
-edit_server_invite() {
-    clear
-    echo "╔══════════════════════════════════════════╗"
-    echo "║          SET SERVER LINK                 ║"
-    echo "╚══════════════════════════════════════════╝"
-    echo ""
-    echo "Current server link:"
-    echo "$SERVER_INVITE"
-    echo ""
-    read -p "Enter new invite link (Enter to keep current): " new_invite
-
-    if [ -n "$new_invite" ]; then
-        save_config_value "SERVER_INVITE" "$new_invite"
-        echo ""
-        echo "[✓] Server link updated!"
-    else
-        echo ""
-        echo "[i] Setting unchanged"
-    fi
-    echo ""
-    read -p "Press Enter to continue..."
-}
-
-
-toggle_antiafk() {
-    while true; do
-        clear
-        echo "╔══════════════════════════════════════════╗"
-        echo "║           ANTIAFK SETTINGS               ║"
-        echo "╚══════════════════════════════════════════╝"
-        echo ""
-        if $ANTIAFK_ENABLED; then
-            echo "Current status: Enabled"
-            echo "Interval: ${ANTIAFK_INTERVAL} seconds"
-        else
-            echo "Current status: Disabled"
-        fi
-        echo ""
-        echo "1) Enable AntiAFK"
-        echo "2) Disable AntiAFK"
-        echo "3) Change interval (current: ${ANTIAFK_INTERVAL}s)"
-        echo "4) Back"
-        echo ""
-        read -p "Select option [1-4]: " choice
-
-        case $choice in
-            1)
-                save_config_value "ANTIAFK_ENABLED" "true"
-                echo ""
-                echo "[✓] AntiAFK enabled!"
-                read -p "Press Enter to continue..."
-                ;;
-            2)
-                save_config_value "ANTIAFK_ENABLED" "false"
-                echo ""
-                echo "[✓] AntiAFK disabled!"
-                read -p "Press Enter to continue..."
-                ;;
-            3)
-                echo ""
-                read -p "Enter interval in seconds (recommended: 300): " new_interval
-                if [ -n "$new_interval" ] && [ "$new_interval" -gt 0 ] 2>/dev/null; then
-                    save_config_value "ANTIAFK_INTERVAL" "$new_interval"
-                    echo ""
-                    echo "[✓] Interval changed to ${new_interval} seconds!"
-                else
-                    echo ""
-                    echo "[!] Invalid value. Must be a positive number."
-                fi
-                read -p "Press Enter to continue..."
-                ;;
-            4)
-                return
-                ;;
-            *)
-                echo "Invalid choice."
-                read -p "Press Enter to continue..."
-                ;;
-        esac
-    done
-}
-
-edit_config_manual() {
-    clear
-    echo "╔══════════════════════════════════════════╗"
-    echo "║          MANUAL CONFIG EDIT              ║"
-    echo "╚══════════════════════════════════════════╝"
-    echo ""
-    echo "Config file: $CONFIG_FILE"
-    echo ""
-
-    if [ -n "$EDITOR" ]; then
-        $EDITOR "$CONFIG_FILE"
-    elif command -v nano &>/dev/null; then
-        nano "$CONFIG_FILE"
-    elif command -v vim &>/dev/null; then
-        vim "$CONFIG_FILE"
-    elif command -v vi &>/dev/null; then
-        vi "$CONFIG_FILE"
-    else
-        echo "[!] No editor found."
-        echo "Set the \$EDITOR variable or install nano/vim"
-        echo ""
-        read -p "Press Enter to continue..."
-        return
-    fi
-}

@@ -31,6 +31,7 @@ action_queue_run() {
         merchant)           _merchant_run "$log_file" ;;
         strange_controller) _strange_controller_run ;;
         biome_randomizer)   _biome_randomizer_run ;;
+        custom_item:*)      _custom_item_run "${action#custom_item:}" ;;
     esac
 }
 
@@ -39,12 +40,9 @@ action_queue_run() {
 # └─────────────────────────────────────────┘
 
 start_monitoring() {
-    clear
     echo "╔══════════════════════════════════════════╗"
-    echo "║   Aluen's Macro v${VERSION}              ║"
+    echo "║   Aluen's Macro v${VERSION}                     ║"
     echo "╚══════════════════════════════════════════╝"
-    echo ""
-    echo "Press Ctrl+C to stop"
     echo ""
 
     # Dependency check
@@ -60,11 +58,22 @@ start_monitoring() {
             echo "[✓] AntiAFK enabled (every ${ANTIAFK_INTERVAL}s)"
         else
             echo "[!] xdotool not found — AntiAFK disabled"
-            echo "    sudo pacman -S xdotool"
+            echo "    sudo apt install xdotool"
             ANTIAFK_ENABLED=false
         fi
     else
         echo "[i] AntiAFK disabled"
+    fi
+
+    # If any module using key simulation is enabled — do a test jump to trigger
+    # the Remote Control permission prompt before monitoring begins
+    if $ANTIAFK_ENABLED || ${MERCHANT_ENABLED:-false} || ${STRANGE_CONTROLLER_ENABLED:-false} || ${BIOME_RANDOMIZER_ENABLED:-false} || [ "${#CUSTOM_USE_ITEMS[@]}" -gt 0 ]; then
+        if command -v xdotool &>/dev/null; then
+            echo "[*] Requesting remote control permission..."
+            xdotool key space 2>/dev/null
+            sleep 0.3
+            echo "[✓] Remote control permission requested"
+        fi
     fi
 
     # Config validation
@@ -117,10 +126,11 @@ start_monitoring() {
     # First tick fires immediately on startup.
     ANTIAFK_LAST=0
 
-    # Strange Controller and Biome Randomizer fire 10 seconds after start.
+    # Strange Controller, Biome Randomizer and custom items fire 10 seconds after start.
     local _now; _now=$(date +%s)
     STRANGE_CONTROLLER_LAST=$(( _now - ${STRANGE_CONTROLLER_INTERVAL:-1200} + 10 ))
     BIOME_RANDOMIZER_LAST=$(( _now - ${BIOME_RANDOMIZER_INTERVAL:-2100} + 10 ))
+    custom_items_init
 
     # FIFO for line passing
     local fifo
@@ -142,6 +152,16 @@ start_monitoring() {
         cleanup_done=true
 
         monitoring_active=false
+
+        # Release any keys that may be held (e.g. merchant walk-away)
+        if command -v xdotool &>/dev/null; then
+            xdotool keyup s 2>/dev/null
+            xdotool keyup space 2>/dev/null
+        fi
+
+        # Kill any child xdotool/tail processes still running
+        pkill -P $$ 2>/dev/null || true
+
         [ -n "$tail_pid" ] && kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null
 
         exec 3>&- 2>/dev/null
@@ -193,6 +213,7 @@ start_monitoring() {
         merchant_tick "$log_file"
         strange_controller_tick
         biome_randomizer_tick
+        custom_items_tick
         action_queue_run "$log_file"
 
         # Switch to a new log only if the current one is deleted (session ended)

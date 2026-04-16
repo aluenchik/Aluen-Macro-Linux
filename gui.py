@@ -3,7 +3,7 @@
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
-import subprocess, threading, os, re, webbrowser, json
+import subprocess, threading, os, re, webbrowser, json, urllib.request, signal
 try:
     from PIL import Image, ImageTk
     _PIL = True
@@ -185,13 +185,15 @@ class App(tk.Tk):
         self.configure(bg=BG)
         self.option_add("*tearOff", False)
 
-        self._proc     = None
-        self._running  = False
-        self._cfg      = read_config()
-        self._arrs     = read_arrays()
-        self._vars     = {}
-        self._avars    = {}
-        self._inv      = set()
+        self._proc          = None
+        self._running       = False
+        self._cfg           = read_config()
+        self._arrs          = read_arrays()
+        self._vars          = {}
+        self._avars         = {}
+        self._inv           = set()
+        self._custom_items  = []   # list of {"name": str, "cooldown": str}
+        self._custom_items_frame = None
 
         self._logo_lg  = _load_img(100)
         _ico           = _load_img(32)
@@ -199,6 +201,7 @@ class App(tk.Tk):
 
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        threading.Thread(target=self._check_update, daemon=True).start()
 
     # ── Layout ────────────────────────────────────────────────────────────────
     def _build(self):
@@ -337,10 +340,7 @@ class App(tk.Tk):
         self._sec(q, "AntiAFK", **px)
         self._toggle_row(q, "Enabled", "ANTIAFK_ENABLED", "ANTIAFK_INTERVAL", 300, **px)
 
-        self._sec(q, "Merchant", **px)
-        self._toggle_row(q, "Enabled", "MERCHANT_ENABLED", "MERCHANT_INTERVAL", 300, **px)
-
-        self._sec2(q, "Calibration", **px)
+        self._sec(q, "Calibration", **px)
         self._tpl_bar(q, **px)
         for lbl, kx, ky in [
             ("Inventory button",  "MERCHANT_CAL_INV_X",       "MERCHANT_CAL_INV_Y"),
@@ -351,17 +351,49 @@ class App(tk.Tk):
             ("Dialogue button",   "MERCHANT_CAL_DIALOG_X",     "MERCHANT_CAL_DIALOG_Y"),
             ("Shop button",       "MERCHANT_CAL_SHOP_X",       "MERCHANT_CAL_SHOP_Y"),
             ("Purchase button",   "MERCHANT_CAL_BUY_X",        "MERCHANT_CAL_BUY_Y"),
+            ("Set to max button", "MERCHANT_CAL_MAX_X",        "MERCHANT_CAL_MAX_Y"),
         ]:
             self._coord_row(q, lbl, kx, ky, **px)
 
-        self._sec2(q, "Auto-buy — Mari",   **px); self._item_cbs(q, "MARI_BUY_ITEMS",   MARI_ALL_ITEMS,   **px)
-        self._sec2(q, "Auto-buy — Jester", **px); self._item_cbs(q, "JESTER_BUY_ITEMS", JESTER_ALL_ITEMS, **px)
+        _btn(q, "Save calibration", self._save,
+             bg=ACCENT, fg="#1e1e2e", font=FS, padx=12, pady=5
+             ).pack(anchor="w", padx=18, pady=(8, 4))
 
-        self._sec(q, "Strange Controller", **px)
-        self._toggle_row(q, "Enabled", "STRANGE_CONTROLLER_ENABLED", "STRANGE_CONTROLLER_INTERVAL", 1200, **px)
+        self._sec(q, "Merchant", **px)
+        self._toggle_row(q, "Enabled", "MERCHANT_ENABLED", "MERCHANT_INTERVAL", 300, **px)
+        self._sec2(q, "Auto-buy — Mari",   **px); self._item_cbs(q, "MARI_BUY_ITEMS",   "MARI_MAX_ITEMS",   MARI_ALL_ITEMS,   **px)
+        self._sec2(q, "Auto-buy — Jester", **px); self._item_cbs(q, "JESTER_BUY_ITEMS", "JESTER_MAX_ITEMS", JESTER_ALL_ITEMS, **px)
 
-        self._sec(q, "Biome Randomizer", **px)
-        self._toggle_row(q, "Enabled", "BIOME_RANDOMIZER_ENABLED", "BIOME_RANDOMIZER_INTERVAL", 2100, **px)
+        _btn(q, "Save merchant settings", self._save,
+             bg=ACCENT, fg="#1e1e2e", font=FS, padx=12, pady=5
+             ).pack(anchor="w", padx=18, pady=(8, 4))
+
+        self._sec(q, "Using Items", **px)
+        self._toggle_row(q, "Strange Controller", "STRANGE_CONTROLLER_ENABLED", "STRANGE_CONTROLLER_INTERVAL", 1200, **px)
+        self._toggle_row(q, "Biome Randomizer",   "BIOME_RANDOMIZER_ENABLED",   "BIOME_RANDOMIZER_INTERVAL",   2100, **px)
+
+        self._sec2(q, "Custom items", **px)
+        self._custom_items = [
+            {"name": e.split("|")[0], "cooldown": e.split("|")[1]}
+            for e in self._arrs.get("CUSTOM_USE_ITEMS", []) if "|" in e
+        ]
+        self._custom_items_frame = tk.Frame(q, bg=BG)
+        self._custom_items_frame.pack(fill="x", padx=18, pady=(0, 4))
+        self._rebuild_custom_items()
+
+        add_row = tk.Frame(q, bg=BG)
+        add_row.pack(fill="x", padx=18, pady=(4, 0))
+        self._new_item_name = tk.StringVar()
+        self._new_item_cd   = tk.StringVar(value="300")
+        tk.Label(add_row, text="Name:", font=FS, bg=BG, fg=FG2).pack(side="left", padx=(0,4))
+        nf, _ = _entry(add_row, self._new_item_name, width=22)
+        nf.pack(side="left", padx=(0, 8))
+        tk.Label(add_row, text="every", font=FS, bg=BG, fg=FG2).pack(side="left", padx=(0,4))
+        cf, _ = _entry(add_row, self._new_item_cd, width=6)
+        cf.pack(side="left", padx=(0,4))
+        tk.Label(add_row, text="s", font=FS, bg=BG, fg=FG2).pack(side="left", padx=(0,8))
+        _btn(add_row, "+ Add", self._add_custom_item,
+             bg=GREEN, fg="#1e1e2e", font=FS, padx=10, pady=2).pack(side="left")
 
         self._sec(q, "Biome Notifications", **px)
         self._sec2(q, "Mute (checked = won't notify)", **px)
@@ -501,7 +533,9 @@ class App(tk.Tk):
         _btn(row, "Pick", lambda vx=vx, vy=vy: self._pick_coord(vx, vy),
              font=("Segoe UI", 8), padx=6, pady=1
              ).pack(side="left", padx=(8, 0))
-        _btn(row, "Reset", lambda vx=vx, vy=vy: (vx.set("0"), vy.set("0")),
+        _btn(row, "Reset", lambda vx=vx, vy=vy, kx=kx, ky=ky: (
+                 vx.set(self._DEFAULT_TPL.get(kx, "0")),
+                 vy.set(self._DEFAULT_TPL.get(ky, "0"))),
              font=("Segoe UI", 8), padx=6, pady=1
              ).pack(side="left", padx=(4, 0))
 
@@ -540,29 +574,32 @@ class App(tk.Tk):
         "MERCHANT_CAL_DIALOG_X","MERCHANT_CAL_DIALOG_Y",
         "MERCHANT_CAL_SHOP_X","MERCHANT_CAL_SHOP_Y",
         "MERCHANT_CAL_BUY_X","MERCHANT_CAL_BUY_Y",
+        "MERCHANT_CAL_MAX_X","MERCHANT_CAL_MAX_Y",
     ]
 
     _DEFAULT_TPL = {
-        "MERCHANT_CAL_INV_X":        "29",
-        "MERCHANT_CAL_INV_Y":        "516",
-        "MERCHANT_CAL_ITEMS_TAB_X":  "1258",
-        "MERCHANT_CAL_ITEMS_TAB_Y":  "347",
-        "MERCHANT_CAL_SEARCH_X":     "1002",
-        "MERCHANT_CAL_SEARCH_Y":     "386",
-        "MERCHANT_CAL_ITEM_X":       "841",
-        "MERCHANT_CAL_ITEM_Y":       "484",
-        "MERCHANT_CAL_USE_X":        "682",
-        "MERCHANT_CAL_USE_Y":        "591",
-        "MERCHANT_CAL_DIALOG_X":     "792",
-        "MERCHANT_CAL_DIALOG_Y":     "861",
-        "MERCHANT_CAL_SHOP_X":       "637",
-        "MERCHANT_CAL_SHOP_Y":       "933",
-        "MERCHANT_CAL_BUY_X":        "1122",
-        "MERCHANT_CAL_BUY_Y":        "667",
+        "MERCHANT_CAL_INV_X":        "35",
+        "MERCHANT_CAL_INV_Y":        "510",
+        "MERCHANT_CAL_ITEMS_TAB_X":  "1247",
+        "MERCHANT_CAL_ITEMS_TAB_Y":  "340",
+        "MERCHANT_CAL_SEARCH_X":     "960",
+        "MERCHANT_CAL_SEARCH_Y":     "368",
+        "MERCHANT_CAL_ITEM_X":       "846",
+        "MERCHANT_CAL_ITEM_Y":       "463",
+        "MERCHANT_CAL_USE_X":        "683",
+        "MERCHANT_CAL_USE_Y":        "574",
+        "MERCHANT_CAL_DIALOG_X":     "773",
+        "MERCHANT_CAL_DIALOG_Y":     "849",
+        "MERCHANT_CAL_SHOP_X":       "589",
+        "MERCHANT_CAL_SHOP_Y":       "936",
+        "MERCHANT_CAL_BUY_X":        "1041",
+        "MERCHANT_CAL_BUY_Y":        "648",
+        "MERCHANT_CAL_MAX_X":        "1300",
+        "MERCHANT_CAL_MAX_Y":        "614",
     }
 
     def _tpl_load(self):
-        data = {"1920x1080": self._DEFAULT_TPL}
+        data = {"1920x1080 #not fullscreen": self._DEFAULT_TPL}
         if os.path.exists(TEMPLATES_FILE):
             try:
                 saved = json.loads(open(TEMPLATES_FILE).read())
@@ -583,8 +620,7 @@ class App(tk.Tk):
         names = list(tpls.keys())
         self._tpl_var = tk.StringVar(value=names[0] if names else "")
         self._tpl_cb  = ttk.Combobox(row, textvariable=self._tpl_var,
-                                      values=names, width=18, state="readonly",
-                                      font=FS)
+                                      values=names, width=18, font=FS)
         self._tpl_cb.pack(side="left", padx=(0, 6))
 
         _btn(row, "Load",   self._tpl_apply,  font=FS, padx=8,  pady=2).pack(side="left", padx=(0,4))
@@ -592,7 +628,7 @@ class App(tk.Tk):
         _btn(row, "Delete", self._tpl_delete, font=FS, padx=8,  pady=2).pack(side="left")
 
     def _tpl_apply(self):
-        name = self._tpl_var.get()
+        name = self._tpl_var.get().strip()
         if not name:
             return
         tpls = self._tpl_load()
@@ -604,47 +640,26 @@ class App(tk.Tk):
         self._log_line(f"[Templates] Loaded: {name}", "ok")
 
     def _tpl_save(self):
-        dlg = tk.Toplevel(self)
-        dlg.title("Save template")
-        dlg.attributes("-topmost", True)
-        dlg.resizable(False, False)
-        dlg.configure(bg=BG)
-        dlg.geometry("260x90+200+200")
-
-        tk.Label(dlg, text="Template name:", font=FS, bg=BG, fg=FG
-                 ).pack(anchor="w", padx=14, pady=(12,2))
-        current = self._tpl_var.get()
-        v = tk.StringVar(value="" if current == "1920x1080" else current)
-        frame, entry = _entry(dlg, v)
-        frame.pack(fill="x", padx=14)
-        entry.focus_set()
-
-        def _do(event=None):
-            name = v.get().strip()
-            if not name:
-                return
-            if name == "1920x1080":
-                messagebox.showinfo("Save template", "Cannot overwrite the default template.")
-                return
-            tpls = self._tpl_load()
-            tpls[name] = {k: self._vars[k].get() for k in self._CAL_KEYS if k in self._vars}
-            self._tpl_save_file(tpls)
-            names = list(tpls.keys())
-            self._tpl_cb["values"] = names
-            self._tpl_var.set(name)
-            dlg.destroy()
-            self._log_line(f"[Templates] Saved: {name}", "ok")
-
-        dlg.bind("<Return>", _do)
-        dlg.bind("<Escape>", lambda e: dlg.destroy())
-        _btn(dlg, "Save", _do, bg=ACCENT, fg="#1e1e2e",
-             font=FS, padx=12, pady=3).pack(anchor="e", padx=14, pady=6)
+        name = self._tpl_var.get().strip()
+        if not name:
+            messagebox.showwarning("Save template", "Enter a template name first.")
+            return
+        if name == "1920x1080 #not fullscreen":
+            messagebox.showinfo("Save template", "Cannot overwrite the default template.")
+            return
+        tpls = self._tpl_load()
+        tpls[name] = {k: self._vars[k].get() for k in self._CAL_KEYS if k in self._vars}
+        self._tpl_save_file(tpls)
+        names = list(tpls.keys())
+        self._tpl_cb["values"] = names
+        self._tpl_var.set(name)
+        self._log_line(f"[Templates] Saved: {name}", "ok")
 
     def _tpl_delete(self):
         name = self._tpl_var.get()
         if not name:
             return
-        if name == "1920x1080":
+        if name == "1920x1080 #not fullscreen":
             messagebox.showinfo("Delete template", "Cannot delete the default template.")
             return
         if not messagebox.askyesno("Delete template", f'Delete "{name}"?'):
@@ -657,22 +672,89 @@ class App(tk.Tk):
         self._tpl_var.set(names[0] if names else "")
         self._log_line(f"[Templates] Deleted: {name}", "warn")
 
-    def _item_cbs(self, p, key, items, padx=0, pady=0):
-        sel = {s.lower() for s in self._arrs.get(key,[])}
-        self._avars[key] = {}
-        wrap = tk.Frame(p, bg=BG2, padx=6, pady=4)
-        wrap.pack(fill="x", padx=padx, pady=(0, 8))
-        for item in items:
-            v = tk.BooleanVar(value=item.lower() in sel)
-            self._avars[key][item] = v
-            row = tk.Frame(wrap, bg=BG2)
-            row.pack(fill="x")
-            tk.Checkbutton(row, text=item, variable=v,
-                           bg=BG2, fg=FG, selectcolor=BG3,
-                           activebackground=BG2, activeforeground=FG,
-                           highlightthickness=0, bd=0, relief="flat",
-                           font=FS, cursor="hand2", anchor="w"
-                           ).pack(fill="x", padx=4, pady=1)
+    _ITEM_COLORS = {
+        "Lucky Potion":       "#72BF5E",
+        "Lucky Potion L":     "#72BF5E",
+        "Lucky Potion XL":    "#72BF5E",
+        "Speed Potion":       "#6E99CA",
+        "Speed Potion L":     "#6E99CA",
+        "Speed Potion XL":    "#6E99CA",
+        "Mixed Potion":       "#33FFDA",
+        "Fortune Spoid I":    "#7CE364",
+        "Fortune Spoid II":   "#7CE364",
+        "Fortune Spoid III":  "#7CE364",
+        "Gear A":             "#585b70",
+        "Gear B":             "#585b70",
+        "Lucky Penny":        "#72BF5E",
+        "Void Coin":          "#A66CFF",
+        "Random Potion Sack": "#FFFFFF",
+        "Stella's Star":      "#E0FFA6",
+        "Rune of Wind":       "#7CD4AC",
+        "Rune of Frost":      "#B3FFFA",
+        "Rune of Rainstorm":  "#4E64B7",
+        "Rune of Hell":       "#BD594A",
+        "Rune of Galaxy":     "#825CFF",
+        "Rune of Corruption": "#9A7AC5",
+        "Rune of Nothing":    "#585858",
+        "Rune of Everything": "#F7F7F7",
+        "Strange Potion I":   "#484095",
+        "Strange Potion II":  "#484095",
+        "Stella's Candle":    "#977DC4",
+        "Oblivion Potion":    "#4F4386",
+        "Potion of Bound":    "#4481EC",
+        "Merchant Tracker":   "#615E5E",
+        "Heavenly Potion":    "#FF98DC",
+    }
+
+    def _item_cbs(self, p, key, max_key, items, padx=0, **_):
+        sel     = {s.lower() for s in self._arrs.get(key,     [])}
+        sel_max = {s.lower() for s in self._arrs.get(max_key, [])}
+        self._avars[key]     = {}
+        self._avars[max_key] = {}
+
+        outer = tk.Frame(p, bg=BG2, padx=6, pady=6)
+        outer.pack(fill="x", padx=padx, pady=(0, 8))
+
+        COLS = 2
+        n_rows = -(-len(items) // COLS)  # ceil division
+        for i, item in enumerate(items):
+            v     = tk.BooleanVar(value=item.lower() in sel)
+            v_max = tk.BooleanVar(value=item.lower() in sel_max)
+            self._avars[key][item]     = v
+            self._avars[max_key][item] = v_max
+            color = self._ITEM_COLORS.get(item, FG)
+            r, c = i % n_rows, i // n_rows
+            outer.columnconfigure(c, weight=1)
+
+            SEL_BG = "#313244"
+            cell = tk.Frame(outer, bg=SEL_BG if v.get() else BG3, padx=6, pady=4)
+            cell.grid(row=r, column=c, sticky="ew", padx=3, pady=2)
+
+            cb = tk.Checkbutton(cell, text=item, variable=v,
+                                bg=cell.cget("bg"), fg=color,
+                                selectcolor=BG2,
+                                activebackground=cell.cget("bg"),
+                                activeforeground=color,
+                                highlightthickness=0, bd=0, relief="flat",
+                                font=FS, cursor="hand2", anchor="w")
+            cb.pack(side="left", fill="x", expand=True)
+
+            cb_max = tk.Checkbutton(cell, text="max", variable=v_max,
+                                    bg=cell.cget("bg"), fg=FG2,
+                                    selectcolor=BG2,
+                                    activebackground=cell.cget("bg"),
+                                    activeforeground=ACCENT,
+                                    highlightthickness=0, bd=0, relief="flat",
+                                    font=("Segoe UI", 8), cursor="hand2")
+            cb_max.pack(side="right")
+
+            def _upd(*_, var=v, frm=cell, w=cb, wm=cb_max):
+                bg = SEL_BG if var.get() else BG3
+                frm.configure(bg=bg)
+                w.configure(bg=bg, activebackground=bg)
+                wm.configure(bg=bg, activebackground=bg)
+
+            v.trace_add("write", _upd)
 
     def _biome_cbs_ro(self, p, checked, padx=0, pady=0):
         grid = tk.Frame(p, bg=BG)
@@ -698,10 +780,47 @@ class App(tk.Tk):
             r, c = divmod(i, 4)
             _checks(grid, biome, v).grid(row=r, column=c, sticky="w", padx=4, pady=1)
 
+    # ── Custom items ──────────────────────────────────────────────────────────
+    def _rebuild_custom_items(self):
+        if not self._custom_items_frame:
+            return
+        for w in self._custom_items_frame.winfo_children():
+            w.destroy()
+        if not self._custom_items:
+            tk.Label(self._custom_items_frame, text="No custom items",
+                     font=FS, bg=BG, fg=FG2).pack(anchor="w", padx=4, pady=2)
+            return
+        for i, item in enumerate(self._custom_items):
+            row = tk.Frame(self._custom_items_frame, bg=BG3, padx=6, pady=4)
+            row.pack(fill="x", pady=2)
+            color = self._ITEM_COLORS.get(item["name"], FG)
+            tk.Label(row, text=item["name"], font=FS, bg=BG3, fg=color,
+                     anchor="w").pack(side="left", expand=True, fill="x")
+            tk.Label(row, text=f"every {item['cooldown']}s", font=FS,
+                     bg=BG3, fg=FG2).pack(side="left", padx=8)
+            _btn(row, "✕", lambda i=i: self._del_custom_item(i),
+                 bg=BG3, fg=RED, font=FS, padx=6, pady=1).pack(side="right")
+
+    def _add_custom_item(self):
+        name = self._new_item_name.get().strip()
+        cd   = self._new_item_cd.get().strip()
+        if not name:
+            return
+        if not cd.isdigit() or int(cd) < 1:
+            cd = "300"
+        self._custom_items.append({"name": name, "cooldown": cd})
+        self._new_item_name.set("")
+        self._rebuild_custom_items()
+
+    def _del_custom_item(self, i):
+        self._custom_items.pop(i)
+        self._rebuild_custom_items()
+
     # ── Actions ───────────────────────────────────────────────────────────────
     def _save(self):
         bools = {"ANTIAFK_ENABLED",
-                 "STRANGE_CONTROLLER_ENABLED","BIOME_RANDOMIZER_ENABLED"}
+                 "MERCHANT_ENABLED",
+                 "STRANGE_CONTROLLER_ENABLED", "BIOME_RANDOMIZER_ENABLED"}
         for k, v in self._vars.items():
             val = v.get()
             save_scalar(k, ("true" if val else "false") if k in bools else str(val))
@@ -709,6 +828,8 @@ class App(tk.Tk):
             chosen = [i for i,v in ivars.items() if not v.get()] if k in self._inv \
                 else [i for i,v in ivars.items() if v.get()]
             save_array(k, chosen)
+        save_array("CUSTOM_USE_ITEMS",
+                   [f"{it['name']}|{it['cooldown']}" for it in self._custom_items])
         self._log_line("[GUI] Settings saved.", "ok")
 
     def _start(self):
@@ -720,11 +841,16 @@ class App(tk.Tk):
         self._proc = subprocess.Popen(
             ["bash", MACRO_SH, "--monitor"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, cwd=SCRIPT_DIR)
+            text=True, bufsize=1, cwd=SCRIPT_DIR,
+            start_new_session=True)   # own process group → can kill all children
         threading.Thread(target=self._stream, daemon=True).start()
 
     def _stop(self):
-        if self._proc and self._proc.poll() is None: self._proc.terminate()
+        if self._proc and self._proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(self._proc.pid), signal.SIGTERM)
+            except OSError:
+                self._proc.terminate()
         self._running = False; self._refresh()
         self._log_line("[GUI] Monitoring stopped.", "warn")
 
@@ -761,6 +887,30 @@ class App(tk.Tk):
             self._status.configure(text="● Stopped", fg=RED)
             self._start_btn.configure(state="normal",   bg=GREEN, fg="#1e1e2e")
             self._stop_btn.configure(state="disabled",  bg=BG3,   fg=FG2)
+
+    def _check_update(self):
+        url = "https://api.github.com/repos/aluenchik/Aluen-Macro-Linux/releases/latest"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Aluen-Macro-GUI"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                import json as _json
+                data = _json.loads(r.read().decode())
+            latest = data.get("tag_name", "").lstrip("v")
+            if latest and latest != VERSION:
+                self.after(0, self._show_update_banner, latest)
+        except Exception:
+            pass
+
+    def _show_update_banner(self, latest):
+        bar = tk.Frame(self, bg=YELLOW, pady=4)
+        bar.pack(fill="x", before=self.winfo_children()[1])
+        tk.Label(bar, text=f"Update available: v{latest}  (you have v{VERSION})",
+                 font=FB, bg=YELLOW, fg="#1e1e2e").pack(side="left", padx=12)
+        _btn(bar, "✕", bar.destroy,
+             bg=YELLOW, fg="#1e1e2e", font=FS, padx=6, pady=2).pack(side="right", padx=(0,4))
+        _btn(bar, "View on GitHub", lambda: webbrowser.open(
+                 "https://github.com/aluenchik/Aluen-Macro-Linux/releases"),
+             bg="#1e1e2e", fg=YELLOW, font=FS, padx=10, pady=2).pack(side="right", padx=8)
 
     def _on_close(self):
         self._stop(); self.destroy()

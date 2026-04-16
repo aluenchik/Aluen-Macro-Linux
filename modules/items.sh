@@ -8,6 +8,7 @@
 
 STRANGE_CONTROLLER_LAST=$(date +%s)
 BIOME_RANDOMIZER_LAST=$(date +%s)
+declare -gA _CUSTOM_ITEM_LAST=()
 
 # ┌─────────────────────────────────────────┐
 # │      GENERIC USE-ITEM FROM INVENTORY    │
@@ -18,6 +19,7 @@ BIOME_RANDOMIZER_LAST=$(date +%s)
 _use_item_from_inventory() {
     local wid="$1"
     local item_name="$2"
+    local close_inv="${3:-true}"   # pass "false" to skip closing inventory
     local pfx="[Items]"
 
     _merchant_focus "$wid"
@@ -53,9 +55,11 @@ _use_item_from_inventory() {
     _mclick "$MERCHANT_CAL_USE_X" "$MERCHANT_CAL_USE_Y"
     sleep 1.0
 
-    echo "[$(date '+%H:%M:%S')] $pfx Closing inventory..."
-    _mclick "$MERCHANT_CAL_INV_X" "$MERCHANT_CAL_INV_Y"
-    sleep 0.4
+    if [ "$close_inv" != "false" ]; then
+        echo "[$(date '+%H:%M:%S')] $pfx Closing inventory..."
+        _mclick "$MERCHANT_CAL_INV_X" "$MERCHANT_CAL_INV_Y"
+        sleep 0.4
+    fi
 }
 
 # ┌─────────────────────────────────────────┐
@@ -96,68 +100,6 @@ _strange_controller_run() {
     echo "$ts ─── Done ───"
 }
 
-_strange_controller_toggle() {
-    if [[ "$STRANGE_CONTROLLER_ENABLED" == "true" ]]; then
-        save_config_value "STRANGE_CONTROLLER_ENABLED" "false"
-        echo "[✓] Strange Controller disabled"
-    else
-        save_config_value "STRANGE_CONTROLLER_ENABLED" "true"
-        echo "[✓] Strange Controller enabled"
-    fi
-    load_config
-    read -p "Press Enter to continue..."
-}
-
-_strange_controller_set_interval() {
-    clear
-    echo "╔══════════════════════════════════════════╗"
-    echo "║     STRANGE CONTROLLER INTERVAL          ║"
-    echo "╚══════════════════════════════════════════╝"
-    echo ""
-    local cur="${STRANGE_CONTROLLER_INTERVAL:-1200}"
-    echo "Current: ${cur}s (every $(( cur / 60 )) min)"
-    echo ""
-    read -p "New interval in seconds [1200]: " val
-    val="${val:-1200}"
-    if [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -ge 60 ]; then
-        save_config_value "STRANGE_CONTROLLER_INTERVAL" "$val"
-        echo "[✓] Interval set to ${val}s"
-    else
-        echo "[!] Invalid value (must be >= 60)"
-    fi
-    load_config
-    read -p "Press Enter to continue..."
-}
-
-strange_controller_settings_menu() {
-    while true; do
-        clear
-        echo "╔══════════════════════════════════════════╗"
-        echo "║       STRANGE CONTROLLER MODULE          ║"
-        echo "╚══════════════════════════════════════════╝"
-        echo ""
-        if [[ "$STRANGE_CONTROLLER_ENABLED" == "true" ]]; then
-            echo "  Status   : ✓ Enabled"
-        else
-            echo "  Status   : ✗ Disabled"
-        fi
-        echo "  Interval : ${STRANGE_CONTROLLER_INTERVAL:-1200}s (every $(( ${STRANGE_CONTROLLER_INTERVAL:-1200} / 60 )) min)"
-        echo ""
-        echo "  Calibration shared with Merchant module."
-        echo ""
-        echo "1) Toggle Enable/Disable"
-        echo "2) Set interval"
-        echo "3) Back"
-        echo ""
-        read -p "Select [1-3]: " choice
-        case $choice in
-            1) _strange_controller_toggle ;;
-            2) _strange_controller_set_interval ;;
-            3) return ;;
-            *) read ;;
-        esac
-    done
-}
 
 # ┌─────────────────────────────────────────┐
 # │          BIOME RANDOMIZER               │
@@ -197,65 +139,67 @@ _biome_randomizer_run() {
     echo "$ts ─── Done ───"
 }
 
-_biome_randomizer_toggle() {
-    if [[ "$BIOME_RANDOMIZER_ENABLED" == "true" ]]; then
-        save_config_value "BIOME_RANDOMIZER_ENABLED" "false"
-        echo "[✓] Biome Randomizer disabled"
-    else
-        save_config_value "BIOME_RANDOMIZER_ENABLED" "true"
-        echo "[✓] Biome Randomizer enabled"
-    fi
-    load_config
-    read -p "Press Enter to continue..."
+# ┌─────────────────────────────────────────┐
+# │        MERCHANT TELEPORTER              │
+# └─────────────────────────────────────────┘
+
+_merchant_teleporter_use() {
+    local wid="$1"
+    _use_item_from_inventory "$wid" "merchant teleporter" false
 }
 
-_biome_randomizer_set_interval() {
-    clear
-    echo "╔══════════════════════════════════════════╗"
-    echo "║       BIOME RANDOMIZER INTERVAL          ║"
-    echo "╚══════════════════════════════════════════╝"
-    echo ""
-    local cur="${BIOME_RANDOMIZER_INTERVAL:-2100}"
-    echo "Current: ${cur}s (every $(( cur / 60 )) min)"
-    echo ""
-    read -p "New interval in seconds [2100]: " val
-    val="${val:-2100}"
-    if [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -ge 60 ]; then
-        save_config_value "BIOME_RANDOMIZER_INTERVAL" "$val"
-        echo "[✓] Interval set to ${val}s"
-    else
-        echo "[!] Invalid value (must be >= 60)"
-    fi
-    load_config
-    read -p "Press Enter to continue..."
-}
+# ┌─────────────────────────────────────────┐
+# │          CUSTOM USE ITEMS               │
+# └─────────────────────────────────────────┘
 
-biome_randomizer_settings_menu() {
-    while true; do
-        clear
-        echo "╔══════════════════════════════════════════╗"
-        echo "║        BIOME RANDOMIZER MODULE           ║"
-        echo "╚══════════════════════════════════════════╝"
-        echo ""
-        if [[ "$BIOME_RANDOMIZER_ENABLED" == "true" ]]; then
-            echo "  Status   : ✓ Enabled"
-        else
-            echo "  Status   : ✗ Disabled"
-        fi
-        echo "  Interval : ${BIOME_RANDOMIZER_INTERVAL:-2100}s (every $(( ${BIOME_RANDOMIZER_INTERVAL:-2100} / 60 )) min)"
-        echo ""
-        echo "  Calibration shared with Merchant module."
-        echo ""
-        echo "1) Toggle Enable/Disable"
-        echo "2) Set interval"
-        echo "3) Back"
-        echo ""
-        read -p "Select [1-3]: " choice
-        case $choice in
-            1) _biome_randomizer_toggle ;;
-            2) _biome_randomizer_set_interval ;;
-            3) return ;;
-            *) read ;;
-        esac
+custom_items_init() {
+    local now; now=$(date +%s)
+    for entry in "${CUSTOM_USE_ITEMS[@]:-}"; do
+        [ -z "$entry" ] && continue
+        local name="${entry%%|*}"
+        local key; key="${name// /_}"
+        _CUSTOM_ITEM_LAST["$key"]=$now
     done
 }
+
+custom_items_tick() {
+    for entry in "${CUSTOM_USE_ITEMS[@]:-}"; do
+        [ -z "$entry" ] && continue
+        local name="${entry%%|*}"
+        local interval="${entry##*|}"
+        local key; key="${name// /_}"
+        local now; now=$(date +%s)
+        local last="${_CUSTOM_ITEM_LAST[$key]:-0}"
+        (( now - last < ${interval:-300} )) && continue
+        _CUSTOM_ITEM_LAST["$key"]=$now
+        action_queue_push "custom_item:${name}"
+    done
+}
+
+_custom_item_run() {
+    local item_name="$1"
+    local ts="[$(date '+%H:%M:%S')] [Item: $item_name]"
+
+    if ! command -v xdotool &>/dev/null; then
+        echo "$ts xdotool not found"
+        return
+    fi
+
+    if [ "${MERCHANT_CAL_INV_X:-0}" -eq 0 ] && [ "${MERCHANT_CAL_INV_Y:-0}" -eq 0 ]; then
+        echo "$ts Not calibrated — run calibration in Settings"
+        return
+    fi
+
+    local wid; wid=$(get_window_id)
+    if [ -z "$wid" ]; then
+        echo "$ts Sober window not found"
+        return
+    fi
+
+    echo "$ts ─── Using $item_name ───"
+    local prev; prev=$(xdotool getactivewindow 2>/dev/null)
+    _use_item_from_inventory "$wid" "${item_name,,}"
+    [ -n "$prev" ] && [ "$prev" != "$wid" ] && xdotool windowactivate "$prev" 2>/dev/null
+    echo "$ts ─── Done ───"
+}
+
