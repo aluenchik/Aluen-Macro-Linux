@@ -3,14 +3,45 @@
 # ================================================================
 
 # ┌─────────────────────────────────────────┐
+# │            ACTION QUEUE                 │
+# └─────────────────────────────────────────┘
+#
+# Modules call action_queue_push "name" when their timer fires.
+# The main loop calls action_queue_run once per iteration — only
+# one inventory action runs at a time, the rest wait their turn.
+
+declare -ga _ACTION_QUEUE=()
+
+action_queue_push() {
+    local action="$1"
+    for item in "${_ACTION_QUEUE[@]}"; do
+        [ "$item" = "$action" ] && return   # already queued
+    done
+    _ACTION_QUEUE+=("$action")
+    echo "[$(date '+%H:%M:%S')] [Queue] Queued: $action (depth: ${#_ACTION_QUEUE[@]})"
+}
+
+action_queue_run() {
+    local log_file="$1"
+    [ ${#_ACTION_QUEUE[@]} -eq 0 ] && return
+    local action="${_ACTION_QUEUE[0]}"
+    _ACTION_QUEUE=("${_ACTION_QUEUE[@]:1}")
+    echo "[$(date '+%H:%M:%S')] [Queue] Running: $action"
+    case "$action" in
+        merchant)           _merchant_run "$log_file" ;;
+        strange_controller) _strange_controller_run ;;
+        biome_randomizer)   _biome_randomizer_run ;;
+    esac
+}
+
+# ┌─────────────────────────────────────────┐
 # │           START MONITORING              │
 # └─────────────────────────────────────────┘
 
 start_monitoring() {
     clear
     echo "╔══════════════════════════════════════════╗"
-    echo "║   Sol's RNG Biome Macro v${VERSION}             ║"
-    echo "║   Linux (Wayland) + Sober                ║"
+    echo "║   Aluen's Macro v${VERSION}              ║"
     echo "╚══════════════════════════════════════════╝"
     echo ""
     echo "Press Ctrl+C to stop"
@@ -86,6 +117,11 @@ start_monitoring() {
     # First tick fires immediately on startup.
     ANTIAFK_LAST=0
 
+    # Strange Controller and Biome Randomizer fire 10 seconds after start.
+    local _now; _now=$(date +%s)
+    STRANGE_CONTROLLER_LAST=$(( _now - ${STRANGE_CONTROLLER_INTERVAL:-1200} + 10 ))
+    BIOME_RANDOMIZER_LAST=$(( _now - ${BIOME_RANDOMIZER_INTERVAL:-2100} + 10 ))
+
     # FIFO for line passing
     local fifo
     fifo=$(mktemp -u /tmp/sols_rng_XXXXXX)
@@ -111,10 +147,19 @@ start_monitoring() {
         exec 3>&- 2>/dev/null
         exec 3<&- 2>/dev/null
         rm -f "$fifo" 2>/dev/null
+
+        echo ""
+        echo "[*] Stopping monitoring..."
+        local session_end; session_end=$(date +%s)
+        local session_duration=$(( session_end - session_start ))
+        echo "[*] Sending stop notification..."
+        send_stop_notification "$session_duration"
+        echo "[✓] Monitoring stopped"
+        echo ""
     }
 
-    # Set trap for Ctrl+C
-    trap cleanup INT
+    # Trap both Ctrl+C (INT) and SIGTERM (sent by GUI stop button)
+    trap cleanup INT TERM
 
     start_tail
     exec 3<> "$fifo"
@@ -145,6 +190,10 @@ start_monitoring() {
         fi
 
         antiafk_tick
+        merchant_tick "$log_file"
+        strange_controller_tick
+        biome_randomizer_tick
+        action_queue_run "$log_file"
 
         # Switch to a new log only if the current one is deleted (session ended)
         if ! [ -f "$log_file" ]; then
@@ -158,23 +207,11 @@ start_monitoring() {
         fi
     done
 
-    # Run cleanup after loop exits
+    # Run cleanup (sends stop notification) after loop exits
     cleanup
 
     # Reset trap
-    trap - INT
+    trap - INT TERM
 
-    echo ""
-    echo "[*] Stopping monitoring..."
-
-    # Calculate session duration
-    local session_end; session_end=$(date +%s)
-    local session_duration=$(( session_end - session_start ))
-
-    echo "[*] Sending stop notification..."
-    send_stop_notification "$session_duration"
-
-    echo "[✓] Monitoring stopped"
-    echo ""
     exit 0
 }

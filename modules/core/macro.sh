@@ -1,6 +1,107 @@
+#!/usr/bin/env bash
 # ================================================================
-#   modules/menu.sh - Menu interface
+#   Dependencies: curl, xdotool (for AntiAFK)
 # ================================================================
+
+# ┌─────────────────────────────────────────┐
+# │             MACRO VERSION               │
+# └─────────────────────────────────────────┘
+VERSION="1.2"
+
+# ┌─────────────────────────────────────────┐
+# │           MODULE PATH SETUP             │
+# └─────────────────────────────────────────┘
+
+# Resolve the real script location (follow symlinks)
+if [ -L "${BASH_SOURCE[0]}" ]; then
+    SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+else
+    SCRIPT_PATH="${BASH_SOURCE[0]}"
+fi
+# Core lives in modules/core/ — project root is two levels up
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/../.." && pwd)"
+MODULES_DIR="${SCRIPT_DIR}/modules"
+CORE_DIR="${MODULES_DIR}/core"
+MERCHANT_DIR="${MODULES_DIR}/merchant"
+
+mkdir -p "$CORE_DIR" "$MERCHANT_DIR"
+
+# ┌─────────────────────────────────────────┐
+# │            LOAD MODULES                 │
+# └─────────────────────────────────────────┘
+
+check_core() {
+    local f="${CORE_DIR}/${1}"
+    if [ ! -f "$f" ]; then
+        echo "[ERROR] Core module not found: modules/core/${1}"
+        exit 1
+    fi
+}
+
+check_merchant() {
+    local f="${MERCHANT_DIR}/${1}"
+    if [ ! -f "$f" ]; then
+        echo "[ERROR] Merchant module not found: modules/merchant/${1}"
+        exit 1
+    fi
+}
+
+# Core (always loaded)
+check_core "settings.sh"
+check_core "discord.sh"
+check_core "biome_parser.sh"
+check_core "antiafk.sh"
+check_core "monitor.sh"
+
+source "${CORE_DIR}/settings.sh"
+source "${CORE_DIR}/discord.sh"
+source "${CORE_DIR}/biome_parser.sh"
+source "${CORE_DIR}/antiafk.sh"
+source "${CORE_DIR}/monitor.sh"
+
+# Merchant module
+check_merchant "merchant.sh"
+source "${MERCHANT_DIR}/merchant.sh"
+
+# Items module (Strange Controller, Biome Randomizer)
+ITEMS_MODULE="${MODULES_DIR}/items.sh"
+if [ ! -f "$ITEMS_MODULE" ]; then
+    echo "[ERROR] Module not found: modules/items.sh"
+    exit 1
+fi
+source "$ITEMS_MODULE"
+
+# ┌─────────────────────────────────────────┐
+# │            UPDATE CHECK                 │
+# └─────────────────────────────────────────┘
+
+check_for_updates() {
+    command -v curl &>/dev/null || return
+
+    local api_url="https://api.github.com/repos/aluenchik/Aluen-Macro-Linux/releases/latest"
+    local response
+    response=$(curl -s --max-time 5 "$api_url" 2>/dev/null)
+    [ -z "$response" ] && return
+
+    local latest
+    latest=$(printf '%s' "$response" | grep -oP '"tag_name"\s*:\s*"\K[^"]+')
+    [ -z "$latest" ] && return
+
+    local latest_clean="${latest#v}"
+
+    if [ "$latest_clean" != "$VERSION" ]; then
+        echo "╔══════════════════════════════════════════╗"
+        echo "║           UPDATE AVAILABLE               ║"
+        echo "╚══════════════════════════════════════════╝"
+        echo ""
+        echo "  Current version : v${VERSION}"
+        echo "  Latest version  : ${latest}"
+        echo ""
+        echo "  https://github.com/aluenchik/Aluen-Macro-Linux"
+        echo ""
+        read -p "Press Enter to continue..."
+    fi
+}
 
 # ┌─────────────────────────────────────────┐
 # │              MAIN MENU                  │
@@ -55,19 +156,67 @@ show_settings_menu() {
             echo "   Status: Disabled"
         fi
         echo ""
-        echo "4) Edit config manually"
-        echo "5) AntiAFK diagnostics"
-        echo "6) Back"
+        echo "4) Modules"
+        echo "5) Edit config manually"
+        echo "6) AntiAFK diagnostics"
+        echo "7) Back"
         echo ""
-        read -p "Select option [1-6]: " choice
+        read -p "Select option [1-7]: " choice
 
         case $choice in
             1) edit_webhook_url; load_config ;;
             2) edit_server_invite; load_config ;;
             3) toggle_antiafk; load_config ;;
-            4) edit_config_manual; load_config ;;
-            5) diagnose_window ;;
-            6) return ;;
+            4) show_modules_menu ;;
+            5) edit_config_manual; load_config ;;
+            6) diagnose_window ;;
+            7) return ;;
+            *) echo "Invalid choice. Press Enter..."; read ;;
+        esac
+    done
+}
+
+# ┌─────────────────────────────────────────┐
+# │            MODULES MENU                 │
+# └─────────────────────────────────────────┘
+
+show_modules_menu() {
+    while true; do
+        clear
+        echo "╔══════════════════════════════════════════╗"
+        echo "║               MODULES                    ║"
+        echo "╚══════════════════════════════════════════╝"
+        echo ""
+        echo "1) Merchant"
+        if [[ "$MERCHANT_ENABLED" == "true" ]]; then
+            echo "   Status: Enabled (every ${MERCHANT_INTERVAL:-300}s)"
+        else
+            echo "   Status: Disabled"
+        fi
+        echo ""
+        echo "2) Strange Controller"
+        if [[ "$STRANGE_CONTROLLER_ENABLED" == "true" ]]; then
+            echo "   Status: Enabled (every $(( ${STRANGE_CONTROLLER_INTERVAL:-1200} / 60 )) min)"
+        else
+            echo "   Status: Disabled"
+        fi
+        echo ""
+        echo "3) Biome Randomizer"
+        if [[ "$BIOME_RANDOMIZER_ENABLED" == "true" ]]; then
+            echo "   Status: Enabled (every $(( ${BIOME_RANDOMIZER_INTERVAL:-2100} / 60 )) min)"
+        else
+            echo "   Status: Disabled"
+        fi
+        echo ""
+        echo "4) Back"
+        echo ""
+        read -p "Select option [1-4]: " choice
+
+        case $choice in
+            1) merchant_settings_menu; load_config ;;
+            2) strange_controller_settings_menu; load_config ;;
+            3) biome_randomizer_settings_menu; load_config ;;
+            4) return ;;
             *) echo "Invalid choice. Press Enter..."; read ;;
         esac
     done
@@ -88,23 +237,12 @@ show_info() {
     echo "Platform: Linux + Sober"
     echo "Author: Aluen"
     echo ""
-    echo "FEATURES:"
-    echo "  • Real-time biome monitoring"
-    echo "  • Discord notifications via Webhook"
-    echo "  • AntiAFK system with xdotool"
-    echo "  • Auto-reconnect on new session"
-    echo ""
     echo "DEPENDENCIES:"
     echo "  • curl (required)"
     echo "  • X11: xdotool (for AntiAFK)"
     echo ""
     echo "CONFIGURATION:"
     echo "  File: $CONFIG_FILE"
-    echo ""
-    echo "REQUIREMENTS:"
-    echo "  1. Set Discord Webhook URL"
-    echo "  2. Set Roblox server link"
-    echo "  3. Launch Sol's RNG via Sober"
     echo ""
     read -p "Press Enter to return to menu..."
 }
@@ -120,14 +258,12 @@ diagnose_window() {
     echo "╚══════════════════════════════════════════╝"
     echo ""
 
-    # Display server info
     local session_type="${XDG_SESSION_TYPE:-unknown}"
     echo "Session type : $session_type"
     echo "DISPLAY      : ${DISPLAY:-not set}"
     echo "WAYLAND      : ${WAYLAND_DISPLAY:-not set}"
     echo ""
 
-    # Tool availability
     echo "═══════════════════════════════════════════"
     echo "AVAILABLE TOOLS:"
     echo ""
@@ -139,7 +275,6 @@ diagnose_window() {
         fi
     done
 
-    # X11/XWayland window search
     if [ -n "$DISPLAY" ]; then
         echo ""
         echo "═══════════════════════════════════════════"
@@ -170,7 +305,6 @@ diagnose_window() {
         fi
     fi
 
-    # Native Wayland window search
     if [ -n "$WAYLAND_DISPLAY" ]; then
         echo ""
         echo "═══════════════════════════════════════════"
@@ -272,3 +406,19 @@ diagnose_window() {
     echo ""
     read -p "Press Enter to return to menu..."
 }
+
+# ┌─────────────────────────────────────────┐
+# │              ENTRY POINT                │
+# └─────────────────────────────────────────┘
+
+main() {
+    load_config
+    if [[ "${1:-}" == "--monitor" ]]; then
+        start_monitoring
+        return
+    fi
+    check_for_updates
+    show_main_menu
+}
+
+main "$@"

@@ -49,7 +49,35 @@ validate_server_invite() {
 # └─────────────────────────────────────────┘
 
 get_footer_text() {
-    echo "Aluen's Macro Linux v${VERSION}"
+    echo "Aluen's Macro v${VERSION}"
+}
+
+_send_with_logo() {
+    local payload="$1"
+    local log_label="$2"
+    local logo_icon="${CORE_DIR}/logo.png"
+
+    local http_code
+    if [ -f "$logo_icon" ]; then
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -F "payload_json=${payload}" \
+            -F "files[0]=@${logo_icon};filename=logo.png" \
+            "$WEBHOOK_URL" 2>/dev/null)
+    else
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "$WEBHOOK_URL" 2>/dev/null)
+    fi
+
+    local curl_status=$?
+    if [ $curl_status -ne 0 ]; then
+        echo "[$(date '+%H:%M:%S')] ${log_label} error: curl failed (exit code: $curl_status)"
+    elif [ "$http_code" = "204" ] || [ "$http_code" = "200" ]; then
+        echo "[$(date '+%H:%M:%S')] ${log_label} sent to Discord"
+    else
+        echo "[$(date '+%H:%M:%S')] ${log_label} error (HTTP $http_code)"
+    fi
 }
 
 send_startup_notification() {
@@ -63,6 +91,7 @@ send_startup_notification() {
     "title": "Macro Status",
     "description": "# Macro started! \n\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG",
     "color": 5763719,
+    "thumbnail": {"url": "attachment://logo.png"},
     "footer": {
       "text": "${footer_text}"
     },
@@ -71,21 +100,7 @@ send_startup_notification() {
 }
 EOF
 )
-
-    local http_code
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-        -H "Content-Type: application/json" \
-        -d "$payload" \
-        "$WEBHOOK_URL" 2>/dev/null)
-
-    local curl_status=$?
-    if [ $curl_status -ne 0 ]; then
-        echo "[$(date '+%H:%M:%S')] Startup notification error: curl failed (exit code: $curl_status)"
-    elif [ "$http_code" = "204" ] || [ "$http_code" = "200" ]; then
-        echo "[$(date '+%H:%M:%S')] Startup notification sent to Discord"
-    else
-        echo "[$(date '+%H:%M:%S')] Startup notification error (HTTP $http_code)"
-    fi
+    _send_with_logo "$payload" "Startup notification"
 }
 
 # ┌─────────────────────────────────────────┐
@@ -117,11 +132,28 @@ send_webhook() {
     local title description
     if [ "$event" = "started" ]; then
         title=""
-        description="# ${emoji} BIOME STARTED — ${escaped_biome}\n\n# [Join Server](${escaped_invite})\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG"
+        description="# BIOME STARTED — ${escaped_biome}\n\n# [Join Server](${escaped_invite})\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG"
     else
         title=""
-        description="# ${emoji} BIOME ENDED — ${escaped_biome}\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG"
+        description="# BIOME ENDED — ${escaped_biome}\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG"
         color="3158064"
+    fi
+
+    # Resolve icon paths
+    local biome_lower; biome_lower=$(echo "$biome" | tr '[:upper:]' '[:lower:]')
+    local biome_icon="${CORE_DIR}/biomes/${biome_lower}.png"
+    local logo_icon="${CORE_DIR}/logo.png"
+
+    local thumbnail_json="" footer_icon_json=""
+    local has_biome_icon=false has_logo=false
+    [ -f "$biome_icon" ] && has_biome_icon=true
+    [ -f "$logo_icon"  ] && has_logo=true
+
+    if $has_biome_icon; then
+        thumbnail_json='"thumbnail": {"url": "attachment://biome.png"},'
+    fi
+    if $has_logo; then
+        footer_icon_json='"icon_url": "attachment://logo.png",'
     fi
 
     local payload
@@ -132,7 +164,9 @@ send_webhook() {
     "title": "${title}",
     "description": "${description}",
     "color": ${color},
+    ${thumbnail_json}
     "footer": {
+      ${footer_icon_json}
       "text": "${footer_text}"
     },
     "timestamp": "${timestamp}"
@@ -140,13 +174,23 @@ send_webhook() {
 }
 EOF
 )
-    local http_code
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-        -H "Content-Type: application/json" \
-        -d "$payload" \
-        "$WEBHOOK_URL" 2>/dev/null)
 
-    local curl_status=$?
+    local http_code curl_status
+    if $has_biome_icon || $has_logo; then
+        # Send with file attachments (multipart)
+        local curl_args=(-s -o /dev/null -w "%{http_code}" -X POST)
+        curl_args+=(-F "payload_json=${payload}")
+        $has_biome_icon && curl_args+=(-F "files[0]=@${biome_icon};filename=biome.png")
+        $has_logo        && curl_args+=(-F "files[1]=@${logo_icon};filename=logo.png")
+        http_code=$(curl "${curl_args[@]}" "$WEBHOOK_URL" 2>/dev/null)
+    else
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "$WEBHOOK_URL" 2>/dev/null)
+    fi
+
+    curl_status=$?
     if [ $curl_status -ne 0 ]; then
         echo "[$(date '+%H:%M:%S')] Webhook error: curl failed (exit code: $curl_status)"
     elif [ "$http_code" = "204" ] || [ "$http_code" = "200" ]; then
@@ -185,12 +229,13 @@ send_stop_notification() {
 {
   "embeds": [{
     "title": "Macro Status",
-    "description": "# Macro stopped!\n\n# [Join Server](${escaped_invite})\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG",
+    "description": "# Macro stopped!\n\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG",
     "color": 15158332,
+    "thumbnail": {"url": "attachment://logo.png"},
     "fields": [
       {
-        "name": "Session Times",
-        "value": "**in this session:** $duration_formatted",
+        "name": "Session Time",
+        "value": "**$duration_formatted**",
         "inline": false
       }
     ],
@@ -202,18 +247,5 @@ send_stop_notification() {
 }
 EOF
 )
-    local http_code
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-        -H "Content-Type: application/json" \
-        -d "$payload" \
-        "$WEBHOOK_URL" 2>/dev/null)
-
-    local curl_status=$?
-    if [ $curl_status -ne 0 ]; then
-        echo "[$(date '+%H:%M:%S')] Stop notification error: curl failed (exit code: $curl_status)"
-    elif [ "$http_code" = "204" ] || [ "$http_code" = "200" ]; then
-        echo "[$(date '+%H:%M:%S')] Stop notification sent to Discord"
-    else
-        echo "[$(date '+%H:%M:%S')] Stop notification error (HTTP $http_code)"
-    fi
+    _send_with_logo "$payload" "Stop notification"
 }

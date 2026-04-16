@@ -10,13 +10,19 @@ CONFIG_DIR="$(dirname "$CONFIG_FILE")"
 # └─────────────────────────────────────────┘
 
 declare -gA BIOME_COLORS=(
-    ["WINDY"]="3447003"       ["SNOWY"]="11393254"
-    ["RAINY"]="5592405"       ["SANDSTORM"]="15105570"
-    ["HELL"]="15158332"       ["HEAVEN"]="16777215"
-    ["STARFALL"]="2899536"    ["CORRUPTION"]="7340032"
-    ["NULL"]="4605510"        ["GLITCHED"]="1752220"
-    ["DREAMSPACE"]="15277667" ["CYBERSPACE"]="1146986"
-    ["EGGLAND"]="16776960"
+    ["WINDY"]="6006984"       # #5BA8C8 — soft sky blue
+    ["SNOWY"]="10537192"      # #A0C8E8 — pale ice blue
+    ["RAINY"]="3045560"       # #2E78B8 — medium storm blue
+    ["SANDSTORM"]="13137952"  # #C87820 — sandy orange
+    ["HELL"]="13375488"       # #CC1800 — bright crimson
+    ["HEAVEN"]="15253536"     # #E8C020 — gold
+    ["STARFALL"]="46292"      # #00B4D4 — teal/aqua
+    ["CORRUPTION"]="7876776"  # #7830A8 — purple
+    ["NULL"]="8421504"        # #808080 — gray
+    ["GLITCHED"]="2152512"    # #20D840 — neon green
+    ["DREAMSPACE"]="14700728" # #E050B8 — pink/magenta
+    ["CYBERSPACE"]="51448"    # #00C8F8 — electric cyan
+    ["EGGLAND"]="6860848"     # #68B030 — grass green
 )
 
 declare -gA BIOME_EMOJIS=(
@@ -80,6 +86,52 @@ PING_FOR=(
     "DREAMSPACE"
     "CYBERSPACE"
 )
+
+# ┌─────────────────────────────────────────┐
+# │         MERCHANT MODULE                 │
+# └─────────────────────────────────────────┘
+
+MERCHANT_ENABLED=false
+MERCHANT_INTERVAL=300
+
+# Calibration points — defaults for 1920x1080, recalibrate if UI differs
+MERCHANT_CAL_INV_X=29
+MERCHANT_CAL_INV_Y=516
+MERCHANT_CAL_ITEMS_TAB_X=1258
+MERCHANT_CAL_ITEMS_TAB_Y=347
+MERCHANT_CAL_SEARCH_X=1002
+MERCHANT_CAL_SEARCH_Y=386
+MERCHANT_CAL_ITEM_X=841
+MERCHANT_CAL_ITEM_Y=484
+MERCHANT_CAL_USE_X=682
+MERCHANT_CAL_USE_Y=591
+MERCHANT_CAL_SHOP_X=637
+MERCHANT_CAL_SHOP_Y=933
+MERCHANT_CAL_DIALOG_X=792
+MERCHANT_CAL_DIALOG_Y=861
+MERCHANT_CAL_BUY_X=1122
+MERCHANT_CAL_BUY_Y=667
+
+# Items to auto-buy from Mari (match shop tab text, any case)
+MARI_BUY_ITEMS=()
+
+# Items to auto-buy from Jester (match shop tab text, any case)
+JESTER_BUY_ITEMS=()
+
+
+# ┌─────────────────────────────────────────┐
+# │       STRANGE CONTROLLER                │
+# └─────────────────────────────────────────┘
+
+STRANGE_CONTROLLER_ENABLED=false
+STRANGE_CONTROLLER_INTERVAL=1200   # 20 minutes
+
+# ┌─────────────────────────────────────────┐
+# │         BIOME RANDOMIZER                │
+# └─────────────────────────────────────────┘
+
+BIOME_RANDOMIZER_ENABLED=false
+BIOME_RANDOMIZER_INTERVAL=2100   # 35 minutes
 EOF
     echo "[+] Default config created: $CONFIG_FILE"
 }
