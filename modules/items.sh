@@ -55,89 +55,44 @@ _use_item_from_inventory() {
     _mclick "$MERCHANT_CAL_USE_X" "$MERCHANT_CAL_USE_Y"
     sleep 1.0
 
-    if [ "$close_inv" != "false" ]; then
-        echo "[$(date '+%H:%M:%S')] $pfx Closing inventory..."
-        _mclick "$MERCHANT_CAL_INV_X" "$MERCHANT_CAL_INV_Y"
-        sleep 0.4
-    fi
+    
+    echo "[$(date '+%H:%M:%S')] $pfx Closing inventory..."
+    _mclick "$MERCHANT_CAL_INV_X" "$MERCHANT_CAL_INV_Y"
+    sleep 0.4
 }
 
 # ┌─────────────────────────────────────────┐
-# │         STRANGE CONTROLLER              │
+# │         SHARED ITEM-RUN HELPER          │
 # └─────────────────────────────────────────┘
 
-strange_controller_tick() {
-    [[ "$STRANGE_CONTROLLER_ENABLED" == "true" ]] || return
-    local now; now=$(date +%s)
-    (( now - STRANGE_CONTROLLER_LAST < ${STRANGE_CONTROLLER_INTERVAL:-1200} )) && return
-    STRANGE_CONTROLLER_LAST=$now
-    action_queue_push "strange_controller"
-}
-
-_strange_controller_run() {
-    local ts="[$(date '+%H:%M:%S')] [StrangeController]"
+_run_item_action() {
+    local tag="$1" item_name="$2"
+    local ts="[$(date '+%H:%M:%S')] [$tag]"
 
     if ! command -v xdotool &>/dev/null; then
-        echo "$ts xdotool not found"
-        return
+        echo "$ts xdotool not found"; return
     fi
-
     if [ "${MERCHANT_CAL_INV_X:-0}" -eq 0 ] && [ "${MERCHANT_CAL_INV_Y:-0}" -eq 0 ]; then
-        echo "$ts Not calibrated — run calibration in Settings > Modules > Merchant"
-        return
+        echo "$ts Not calibrated — run calibration in Settings"; return
     fi
-
     local wid; wid=$(get_window_id)
     if [ -z "$wid" ]; then
-        echo "$ts Sober window not found"
-        return
+        echo "$ts Sober window not found"; return
     fi
 
-    echo "$ts ─── Using Strange Controller ───"
+    echo "$ts ─── Using $item_name ───"
     local prev; prev=$(xdotool getactivewindow 2>/dev/null)
-    _use_item_from_inventory "$wid" "strange controller"
+    _use_item_from_inventory "$wid" "$item_name"
     [ -n "$prev" ] && [ "$prev" != "$wid" ] && xdotool windowactivate "$prev" 2>/dev/null
     echo "$ts ─── Done ───"
 }
 
-
 # ┌─────────────────────────────────────────┐
-# │          BIOME RANDOMIZER               │
+# │      STRANGE CONTROLLER / RANDOMIZER    │
 # └─────────────────────────────────────────┘
 
-biome_randomizer_tick() {
-    [[ "$BIOME_RANDOMIZER_ENABLED" == "true" ]] || return
-    local now; now=$(date +%s)
-    (( now - BIOME_RANDOMIZER_LAST < ${BIOME_RANDOMIZER_INTERVAL:-2100} )) && return
-    BIOME_RANDOMIZER_LAST=$now
-    action_queue_push "biome_randomizer"
-}
-
-_biome_randomizer_run() {
-    local ts="[$(date '+%H:%M:%S')] [BiomeRandomizer]"
-
-    if ! command -v xdotool &>/dev/null; then
-        echo "$ts xdotool not found"
-        return
-    fi
-
-    if [ "${MERCHANT_CAL_INV_X:-0}" -eq 0 ] && [ "${MERCHANT_CAL_INV_Y:-0}" -eq 0 ]; then
-        echo "$ts Not calibrated — run calibration in Settings > Modules > Merchant"
-        return
-    fi
-
-    local wid; wid=$(get_window_id)
-    if [ -z "$wid" ]; then
-        echo "$ts Sober window not found"
-        return
-    fi
-
-    echo "$ts ─── Using Biome Randomizer ───"
-    local prev; prev=$(xdotool getactivewindow 2>/dev/null)
-    _use_item_from_inventory "$wid" "biome randomizer"
-    [ -n "$prev" ] && [ "$prev" != "$wid" ] && xdotool windowactivate "$prev" 2>/dev/null
-    echo "$ts ─── Done ───"
-}
+_strange_controller_run() { _run_item_action "StrangeController" "strange controller"; }
+_biome_randomizer_run()   { _run_item_action "BiomeRandomizer"   "biome randomizer";  }
 
 # ┌─────────────────────────────────────────┐
 # │        MERCHANT TELEPORTER              │
@@ -162,44 +117,4 @@ custom_items_init() {
     done
 }
 
-custom_items_tick() {
-    for entry in "${CUSTOM_USE_ITEMS[@]:-}"; do
-        [ -z "$entry" ] && continue
-        local name="${entry%%|*}"
-        local interval="${entry##*|}"
-        local key; key="${name// /_}"
-        local now; now=$(date +%s)
-        local last="${_CUSTOM_ITEM_LAST[$key]:-0}"
-        (( now - last < ${interval:-300} )) && continue
-        _CUSTOM_ITEM_LAST["$key"]=$now
-        action_queue_push "custom_item:${name}"
-    done
-}
-
-_custom_item_run() {
-    local item_name="$1"
-    local ts="[$(date '+%H:%M:%S')] [Item: $item_name]"
-
-    if ! command -v xdotool &>/dev/null; then
-        echo "$ts xdotool not found"
-        return
-    fi
-
-    if [ "${MERCHANT_CAL_INV_X:-0}" -eq 0 ] && [ "${MERCHANT_CAL_INV_Y:-0}" -eq 0 ]; then
-        echo "$ts Not calibrated — run calibration in Settings"
-        return
-    fi
-
-    local wid; wid=$(get_window_id)
-    if [ -z "$wid" ]; then
-        echo "$ts Sober window not found"
-        return
-    fi
-
-    echo "$ts ─── Using $item_name ───"
-    local prev; prev=$(xdotool getactivewindow 2>/dev/null)
-    _use_item_from_inventory "$wid" "${item_name,,}"
-    [ -n "$prev" ] && [ "$prev" != "$wid" ] && xdotool windowactivate "$prev" 2>/dev/null
-    echo "$ts ─── Done ───"
-}
-
+_custom_item_run() { _run_item_action "Item: $1" "${1,,}"; }

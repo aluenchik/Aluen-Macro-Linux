@@ -8,8 +8,6 @@ if [ -z "$MERCHANT_DIR" ]; then
 fi
 
 MERCHANT_LAST=$(date +%s)
-STRANGE_CONTROLLER_LAST=$(date +%s)
-BIOME_RANDOMIZER_LAST=$(date +%s)
 
 # ┌─────────────────────────────────────────┐
 # │           SCREENSHOT TOOL               │
@@ -34,48 +32,6 @@ _take_screenshot() {
 # ┌─────────────────────────────────────────┐
 # │        DISCORD NOTIFICATION             │
 # └─────────────────────────────────────────┘
-
-_merchant_send_discord() {
-    local screenshot="$1"
-    local note="$2"
-    local timestamp; timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local footer_text; footer_text=$(get_footer_text)
-    local escaped_note; escaped_note=$(escape_json_string "$note")
-
-    local payload
-    payload=$(cat <<EOF
-{
-  "embeds": [{
-    "title": "🏪 Merchant Detected!",
-    "description": "${escaped_note}\n\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG",
-    "color": 16766720,
-    "footer": {"text": "${footer_text}"},
-    "timestamp": "${timestamp}",
-    "image": {"url": "attachment://merchant.png"}
-  }]
-}
-EOF
-)
-
-    local http_code
-    if [ -f "$screenshot" ]; then
-        http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-            -F "payload_json=${payload}" \
-            -F "file=@${screenshot};filename=merchant.png" \
-            "$WEBHOOK_URL" 2>/dev/null)
-    else
-        http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-            -H "Content-Type: application/json" \
-            -d "$payload" \
-            "$WEBHOOK_URL" 2>/dev/null)
-    fi
-
-    if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
-        echo "[$(date '+%H:%M:%S')] [Merchant] Screenshot sent to Discord (HTTP $http_code)"
-    else
-        echo "[$(date '+%H:%M:%S')] [Merchant] Discord error (HTTP $http_code)"
-    fi
-}
 
 # ┌─────────────────────────────────────────┐
 # │           XDOTOOL HELPERS               │
@@ -218,14 +174,6 @@ _merchant_buy_from_shop() {
 # │              MAIN TICK                  │
 # └─────────────────────────────────────────┘
 
-merchant_tick() {
-    local log_file="$1"
-    [[ "$MERCHANT_ENABLED" == "true" ]] || return
-    local now; now=$(date +%s)
-    (( now - MERCHANT_LAST < MERCHANT_INTERVAL )) && return
-    MERCHANT_LAST=$now
-    action_queue_push "merchant"
-}
 
 _merchant_run() {
     local log_file="$1"
@@ -276,17 +224,17 @@ _merchant_run() {
 
         if ! command -v tesseract &>/dev/null; then
             echo "$ts tesseract not found — skipping detection and auto-buy"
-            _merchant_send_discord "" "**Merchant appeared!**"
+            send_merchant_notification
         elif ! _take_screenshot "$shot"; then
             echo "$ts Screenshot failed — skipping detection and auto-buy"
-            _merchant_send_discord "" "**Merchant appeared!** (no screenshot)"
+            send_merchant_notification
         else
             # Step 1: identify merchant
             _merchant_detect "$shot"
             # Step 2: buy items (only if merchant known)
             _merchant_buy_from_shop "$wid" "$shot"
-            _merchant_send_discord "$shot" "**Merchant: ${DETECTED_MERCHANT_NAME}** has appeared!"
             rm -f "$shot"
+            send_merchant_notification
         fi
 
         echo "$ts Walking away (holding S)..."

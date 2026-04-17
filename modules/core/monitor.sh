@@ -35,6 +35,36 @@ action_queue_run() {
     esac
 }
 
+ticks_run() {
+    local log_file="$1"
+    local now; now=$(date +%s)
+
+    antiafk_tick
+
+    if [[ "$MERCHANT_ENABLED" == "true" ]]; then
+        (( now - MERCHANT_LAST < MERCHANT_INTERVAL )) || { MERCHANT_LAST=$now; action_queue_push "merchant"; }
+    fi
+
+    if [[ "$STRANGE_CONTROLLER_ENABLED" == "true" ]]; then
+        (( now - STRANGE_CONTROLLER_LAST < ${STRANGE_CONTROLLER_INTERVAL:-1200} )) || { STRANGE_CONTROLLER_LAST=$now; action_queue_push "strange_controller"; }
+    fi
+
+    if [[ "$BIOME_RANDOMIZER_ENABLED" == "true" ]]; then
+        (( now - BIOME_RANDOMIZER_LAST < ${BIOME_RANDOMIZER_INTERVAL:-2100} )) || { BIOME_RANDOMIZER_LAST=$now; action_queue_push "biome_randomizer"; }
+    fi
+
+    for entry in "${CUSTOM_USE_ITEMS[@]:-}"; do
+        [ -z "$entry" ] && continue
+        local name="${entry%%|*}"
+        local interval="${entry##*|}"
+        local key="${name// /_}"
+        local last="${_CUSTOM_ITEM_LAST[$key]:-0}"
+        (( now - last < ${interval:-300} )) || { _CUSTOM_ITEM_LAST["$key"]=$now; action_queue_push "custom_item:${name}"; }
+    done
+
+    action_queue_run "$log_file"
+}
+
 # ┌─────────────────────────────────────────┐
 # │           START MONITORING              │
 # └─────────────────────────────────────────┘
@@ -209,12 +239,7 @@ start_monitoring() {
             fi
         fi
 
-        antiafk_tick
-        merchant_tick "$log_file"
-        strange_controller_tick
-        biome_randomizer_tick
-        custom_items_tick
-        action_queue_run "$log_file"
+        ticks_run "$log_file"
 
         # Switch to a new log only if the current one is deleted (session ended)
         if ! [ -f "$log_file" ]; then

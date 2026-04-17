@@ -201,6 +201,47 @@ EOF
 }
 
 # ┌─────────────────────────────────────────┐
+# │        MERCHANT NOTIFICATION            │
+# └─────────────────────────────────────────┘
+
+send_merchant_notification() {
+    local timestamp; timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local footer_text; footer_text=$(get_footer_text)
+
+    local payload
+    payload=$(cat <<EOF
+{
+  "embeds": [{
+    "title": "🏪 ${DETECTED_MERCHANT_NAME} Detected!",
+    "color": 16766720,
+    "footer": {"text": "${footer_text}"},
+    "timestamp": "${timestamp}"
+  }],
+  "components": [{
+    "type": 1,
+    "components": [
+      {"type": 2, "style": 5, "label": "Join Server", "url": "${SERVER_INVITE}"},
+      {"type": 2, "style": 5, "label": "Discord", "url": "https://discord.gg/nQFyFsRPaG"}
+    ]
+  }]
+}
+EOF
+)
+
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        "$WEBHOOK_URL" 2>/dev/null)
+
+    if [ "$http_code" = "200" ] || [ "$http_code" = "204" ]; then
+        echo "[$(date '+%H:%M:%S')] [Merchant] Notify sent to Discord (HTTP $http_code)"
+    else
+        echo "[$(date '+%H:%M:%S')] [Merchant] Discord error (HTTP $http_code)"
+    fi
+}
+
+# ┌─────────────────────────────────────────┐
 # │         STOP NOTIFICATION               │
 # └─────────────────────────────────────────┘
 
