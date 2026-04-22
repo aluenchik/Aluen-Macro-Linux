@@ -201,6 +201,8 @@ class App(tk.Tk):
 
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<F1>", lambda e: self._start())
+        self.bind("<F2>", lambda e: self._stop())
         threading.Thread(target=self._check_update, daemon=True).start()
 
     # ── Layout ────────────────────────────────────────────────────────────────
