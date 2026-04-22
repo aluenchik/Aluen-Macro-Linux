@@ -16,6 +16,7 @@ MACRO_SH      = os.path.join(SCRIPT_DIR, "macro.sh")
 _CORE_MACRO   = os.path.join(SCRIPT_DIR, "modules", "core", "macro.sh")
 CONFIG_FILE    = os.path.expanduser("~/.config/sols_rng/config.conf")
 TEMPLATES_FILE = os.path.expanduser("~/.config/sols_rng/cal_templates.json")
+STATS_FILE     = os.path.expanduser("~/.config/sols_rng/stats.json")
 LOGO_PNG    = os.path.join(SCRIPT_DIR, "modules", "core", "logo.png")
 
 def _read_version() -> str:
@@ -194,6 +195,8 @@ class App(tk.Tk):
         self._inv           = set()
         self._custom_items  = []   # list of {"name": str, "cooldown": str}
         self._custom_items_frame = None
+        self._biome_counts  = {}
+        self._biome_labels  = {}
 
         self._logo_lg  = _load_img(100)
         _ico           = _load_img(32)
@@ -203,6 +206,7 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<F1>", lambda e: self._start())
         self.bind("<F2>", lambda e: self._stop())
+        self.bind("<Control-z>", lambda e: self._stop())
         threading.Thread(target=self._check_update, daemon=True).start()
 
     # ── Layout ────────────────────────────────────────────────────────────────
@@ -214,11 +218,11 @@ class App(tk.Tk):
         tk.Label(hdr, text="Aluen's Macro", font=("Segoe UI", 12, "bold"),
                  bg=BG2, fg=FG, pady=10).pack(side="left", padx=16)
 
-        self._stop_btn = _btn(hdr, "■  Stop", self._stop,
+        self._stop_btn = _btn(hdr, "■  Stop  [F2]", self._stop,
                               bg=BG3, padx=14, pady=6, state="disabled")
         self._stop_btn.pack(side="right", padx=(4,12))
 
-        self._start_btn = _btn(hdr, "▶  Start", self._start,
+        self._start_btn = _btn(hdr, "▶  Start  [F1]", self._start,
                                bg=GREEN, fg="#1e1e2e", font=FB, padx=14, pady=6)
         self._start_btn.pack(side="right", padx=4)
 
@@ -267,8 +271,12 @@ class App(tk.Tk):
         t2 = tk.Frame(nb, bg=BG)
         t3 = tk.Frame(nb, bg=BG)
         t4 = tk.Frame(nb, bg=BG)
+        t5 = tk.Frame(nb, bg=BG)
+        t6 = tk.Frame(nb, bg=BG)
         nb.add(t1, text="Main")
         nb.add(t2, text="Settings")
+        nb.add(t5, text="Webhooks")
+        nb.add(t6, text="Calibration")
         nb.add(t4, text="Special Thanks")
         nb.add(t3, text="About")
 
@@ -276,6 +284,8 @@ class App(tk.Tk):
         self._tab_settings(t2)
         self._tab_about(t3)
         self._tab_thanks(t4)
+        self._tab_webhooks(t5)
+        self._tab_calibration(t6)
 
         # ── Footer ────────────────────────────────────────────────────────────
         tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
@@ -300,12 +310,53 @@ class App(tk.Tk):
         self._toggle_row(left, "Strange Controller", "STRANGE_CONTROLLER_ENABLED", "STRANGE_CONTROLLER_INTERVAL", 1200)
         self._toggle_row(left, "Biome Randomizer",   "BIOME_RANDOMIZER_ENABLED",   "BIOME_RANDOMIZER_INTERVAL",   2100)
 
-        self._sec(left, "Discord")
-        self._field(left, "Webhook URL",   "WEBHOOK_URL")
-        self._field(left, "Server Invite", "SERVER_INVITE")
-
         _btn(left, "Save", self._save, bg=ACCENT, fg="#1e1e2e", font=FS,
              padx=14, pady=5).pack(anchor="w", pady=(14,0))
+
+        # Session
+        self._sec(left, "Session")
+        session_row = tk.Frame(left, bg=BG)
+        session_row.pack(fill="x")
+        tk.Label(session_row, text="Time", font=FS, bg=BG, fg=FG2).pack(side="left")
+        self._session_lbl = tk.Label(session_row, text="00:00:00", font=FS, bg=BG, fg=FG)
+        self._session_lbl.pack(side="right")
+        self._session_start = None
+        self._session_timer_id = None
+
+        biomes_row = tk.Frame(left, bg=BG)
+        biomes_row.pack(fill="x", pady=(2, 0))
+        tk.Label(biomes_row, text="Biomes", font=FS, bg=BG, fg=FG2).pack(side="left")
+        self._session_biomes_lbl = tk.Label(biomes_row, text="0", font=FB, bg=BG, fg=ACCENT)
+        self._session_biomes_lbl.pack(side="right")
+
+        # Biome counter
+        self._sec(left, "Biome Stats")
+        self._biome_counts, self._total_biomes = self._load_stats()
+        self._biome_session = {b: 0 for b in ALL_BIOMES}
+
+        grid = tk.Frame(left, bg=BG)
+        grid.pack(fill="x")
+        self._biome_labels = {}          # biome → total_lbl
+        for i, biome in enumerate(ALL_BIOMES):
+            r, c = divmod(i, 2)
+            cell = tk.Frame(grid, bg=BG)
+            cell.grid(row=r, column=c, sticky="ew", padx=(0, 8), pady=1)
+            grid.columnconfigure(c, weight=1)
+            tk.Label(cell, text=biome, font=FS, bg=BG, fg=FG2,
+                     anchor="w").pack(side="left")
+            lbl_t = tk.Label(cell, text=str(self._biome_counts.get(biome, 0)),
+                             font=FS, bg=BG, fg=FG, anchor="e")
+            lbl_t.pack(side="right")
+            self._biome_labels[biome] = lbl_t
+
+        # Separator + Total
+        tk.Frame(left, bg=BORDER, height=1).pack(fill="x", pady=(6, 0))
+        total_row = tk.Frame(left, bg=BG)
+        total_row.pack(fill="x", pady=(4, 0))
+        tk.Label(total_row, text="Total Biomes", font=FB, bg=BG, fg=FG2).pack(side="left")
+        self._total_lbl = tk.Label(total_row, text=str(self._total_biomes),
+                                   font=FB, bg=BG, fg=ACCENT)
+        self._total_lbl.pack(side="right")
 
         # Right panel — log
         right = tk.Frame(body, bg=BG)
@@ -334,32 +385,8 @@ class App(tk.Tk):
         q  = sf.inner
         px = dict(padx=18, pady=0)
 
-        self._sec(q, "Discord", **px)
-        self._field(q, "Webhook URL",   "WEBHOOK_URL",   **px)
-        self._field(q, "Server Invite", "SERVER_INVITE", **px)
-
-
         self._sec(q, "AntiAFK", **px)
         self._toggle_row(q, "Enabled", "ANTIAFK_ENABLED", "ANTIAFK_INTERVAL", 300, **px)
-
-        self._sec(q, "Calibration", **px)
-        self._tpl_bar(q, **px)
-        for lbl, kx, ky in [
-            ("Inventory button",  "MERCHANT_CAL_INV_X",       "MERCHANT_CAL_INV_Y"),
-            ("Items tab",         "MERCHANT_CAL_ITEMS_TAB_X",  "MERCHANT_CAL_ITEMS_TAB_Y"),
-            ("Search box",        "MERCHANT_CAL_SEARCH_X",     "MERCHANT_CAL_SEARCH_Y"),
-            ("Item slot",         "MERCHANT_CAL_ITEM_X",       "MERCHANT_CAL_ITEM_Y"),
-            ("Use button",        "MERCHANT_CAL_USE_X",        "MERCHANT_CAL_USE_Y"),
-            ("Dialogue button",   "MERCHANT_CAL_DIALOG_X",     "MERCHANT_CAL_DIALOG_Y"),
-            ("Shop button",       "MERCHANT_CAL_SHOP_X",       "MERCHANT_CAL_SHOP_Y"),
-            ("Purchase button",   "MERCHANT_CAL_BUY_X",        "MERCHANT_CAL_BUY_Y"),
-            ("Set to max button", "MERCHANT_CAL_MAX_X",        "MERCHANT_CAL_MAX_Y"),
-        ]:
-            self._coord_row(q, lbl, kx, ky, **px)
-
-        _btn(q, "Save calibration", self._save,
-             bg=ACCENT, fg="#1e1e2e", font=FS, padx=12, pady=5
-             ).pack(anchor="w", padx=18, pady=(8, 4))
 
         self._sec(q, "Merchant", **px)
         self._toggle_row(q, "Enabled", "MERCHANT_ENABLED", "MERCHANT_INTERVAL", 300, **px)
@@ -400,7 +427,7 @@ class App(tk.Tk):
         self._sec(q, "Biome Notifications", **px)
         self._sec2(q, "Mute (checked = won't notify)", **px)
         self._biome_cbs(q, "NOTIFY_ONLY", invert=True, **px)
-        self._sec2(q, "Ping role for biomes", **px)
+        self._sec2(q, "Ping for biomes", **px)
         self._biome_cbs_ro(q, {"GLITCHED","DREAMSPACE","CYBERSPACE"}, **px)
 
         _btn(q, "  Save all settings  ", self._save,
@@ -408,6 +435,131 @@ class App(tk.Tk):
              ).pack(anchor="w", padx=18, pady=18)
 
         sf.bind_scroll(q)
+
+    # ── Tab Webhooks ──────────────────────────────────────────────────────────
+    def _tab_calibration(self, p):
+        q  = tk.Frame(p, bg=BG)
+        q.pack(fill="both", expand=True)
+        px = dict(padx=18, pady=0)
+
+        self._sec(q, "Calibration", **px)
+        self._tpl_bar(q, **px)
+        for lbl, kx, ky in [
+            ("Inventory button",  "MERCHANT_CAL_INV_X",       "MERCHANT_CAL_INV_Y"),
+            ("Items tab",         "MERCHANT_CAL_ITEMS_TAB_X",  "MERCHANT_CAL_ITEMS_TAB_Y"),
+            ("Search box",        "MERCHANT_CAL_SEARCH_X",     "MERCHANT_CAL_SEARCH_Y"),
+            ("Item slot",         "MERCHANT_CAL_ITEM_X",       "MERCHANT_CAL_ITEM_Y"),
+            ("Use button",        "MERCHANT_CAL_USE_X",        "MERCHANT_CAL_USE_Y"),
+            ("Dialogue button",   "MERCHANT_CAL_DIALOG_X",     "MERCHANT_CAL_DIALOG_Y"),
+            ("Shop button",       "MERCHANT_CAL_SHOP_X",       "MERCHANT_CAL_SHOP_Y"),
+            ("Purchase button",   "MERCHANT_CAL_BUY_X",        "MERCHANT_CAL_BUY_Y"),
+            ("Set to max button", "MERCHANT_CAL_MAX_X",        "MERCHANT_CAL_MAX_Y"),
+        ]:
+            self._coord_row(q, lbl, kx, ky, **px)
+
+        _btn(q, "Save calibration", self._save,
+             bg=ACCENT, fg="#1e1e2e", font=FS, padx=12, pady=5
+             ).pack(anchor="w", padx=18, pady=(8, 4))
+
+    def _tab_webhooks(self, p):
+        f = tk.Frame(p, bg=BG)
+        f.pack(fill="both", expand=True, padx=24, pady=20)
+
+        self._sec(f, "Discord Webhooks")
+
+        # Webhook URL
+        tk.Label(f, text="Webhook URL", font=FS, bg=BG, fg=FG2).pack(anchor="w")
+        wh_row = tk.Frame(f, bg=BG)
+        wh_row.pack(fill="x", pady=(2, 10))
+        if "WEBHOOK_URL" not in self._vars:
+            self._vars["WEBHOOK_URL"] = tk.StringVar(value=self._cfg.get("WEBHOOK_URL", ""))
+        wh_var = self._vars["WEBHOOK_URL"]
+        wh_frame = tk.Frame(wh_row, bg=BORDER, padx=1, pady=1)
+        wh_frame.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self._wh_entry = tk.Entry(wh_frame, textvariable=wh_var, bg=BG2, fg=FG,
+                                  insertbackground=FG, relief="flat", bd=0,
+                                  highlightthickness=0, font=FS, show="•")
+        self._wh_entry.pack(fill="x")
+        _btn(wh_row, "Show", lambda: self._toggle_secret(self._wh_entry, self._wh_show_btn),
+             font=FS, padx=8, pady=2).pack(side="left")
+        self._wh_show_btn = wh_row.winfo_children()[-1]
+
+        # Server Invite
+        tk.Label(f, text="Server Invite (VIP link)", font=FS, bg=BG, fg=FG2).pack(anchor="w")
+        inv_row = tk.Frame(f, bg=BG)
+        inv_row.pack(fill="x", pady=(2, 10))
+        if "SERVER_INVITE" not in self._vars:
+            self._vars["SERVER_INVITE"] = tk.StringVar(value=self._cfg.get("SERVER_INVITE", ""))
+        inv_var = self._vars["SERVER_INVITE"]
+        inv_frame = tk.Frame(inv_row, bg=BORDER, padx=1, pady=1)
+        inv_frame.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self._inv_entry = tk.Entry(inv_frame, textvariable=inv_var, bg=BG2, fg=FG,
+                                   insertbackground=FG, relief="flat", bd=0,
+                                   highlightthickness=0, font=FS, show="•")
+        self._inv_entry.pack(fill="x")
+        _btn(inv_row, "Show", lambda: self._toggle_secret(self._inv_entry, self._inv_show_btn),
+             font=FS, padx=8, pady=2).pack(side="left")
+        self._inv_show_btn = inv_row.winfo_children()[-1]
+
+        btn_row = tk.Frame(f, bg=BG)
+        btn_row.pack(anchor="w", pady=(16, 0))
+        _btn(btn_row, "Save", self._save, bg=ACCENT, fg="#1e1e2e", font=FB,
+             padx=14, pady=7).pack(side="left", padx=(0, 8))
+        _btn(btn_row, "Test Webhook", self._test_webhook, font=FS,
+             padx=12, pady=7).pack(side="left")
+
+    def _test_webhook(self):
+        url = self._vars.get("WEBHOOK_URL", tk.StringVar()).get().strip()
+        if not url:
+            messagebox.showwarning("Test Webhook", "Webhook URL is empty.")
+            return
+        def _send():
+            try:
+                import datetime
+                has_logo = os.path.isfile(LOGO_PNG)
+                embed = {
+                    "title": "Macro Status",
+                    "description": "# Webhook test!",
+                    "color": 5763719,
+                    "footer": {"text": f"Aluen's Macro v{VERSION}"},
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+                if has_logo:
+                    embed["thumbnail"] = {"url": "attachment://logo.png"}
+                    embed["footer"]["icon_url"] = "attachment://logo.png"
+                payload = json.dumps({"embeds": [embed]})
+
+                if has_logo:
+                    result = subprocess.run(
+                        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                         "-X", "POST",
+                         "-F", f"payload_json={payload}",
+                         "-F", f"files[0]=@{LOGO_PNG};filename=logo.png",
+                         url],
+                        capture_output=True, text=True, timeout=10
+                    )
+                else:
+                    result = subprocess.run(
+                        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                         "-X", "POST", "-H", "Content-Type: application/json",
+                         "-d", payload, url],
+                        capture_output=True, text=True, timeout=10
+                    )
+                code = result.stdout.strip()
+            except Exception as ex:
+                code = str(ex)
+            ok = code in ("200", "204")
+            self.after(0, lambda: messagebox.showinfo("Test Webhook", "Webhook OK!") if ok
+                else messagebox.showerror("Test Webhook", f"Failed: HTTP {code}"))
+        threading.Thread(target=_send, daemon=True).start()
+
+    def _toggle_secret(self, entry, btn):
+        if entry.cget("show") == "•":
+            entry.configure(show="")
+            btn.configure(text="Hide")
+        else:
+            entry.configure(show="•")
+            btn.configure(text="Show")
 
     # ── Tab 3 ─────────────────────────────────────────────────────────────────
     def _tab_about(self, p):
@@ -838,7 +990,7 @@ class App(tk.Tk):
         if self._running: return
         if not os.path.exists(MACRO_SH):
             messagebox.showerror("Error", f"macro.sh not found:\n{MACRO_SH}"); return
-        self._save(); self._clear_log()
+        self._save(); self._clear_log(); self._reset_biome_counter()
         self._running = True; self._refresh()
         self._proc = subprocess.Popen(
             ["bash", MACRO_SH, "--monitor"],
@@ -846,6 +998,7 @@ class App(tk.Tk):
             text=True, bufsize=1, cwd=SCRIPT_DIR,
             start_new_session=True)   # own process group → can kill all children
         threading.Thread(target=self._stream, daemon=True).start()
+        self._start_session_timer()
 
     def _stop(self):
         if self._proc and self._proc.poll() is None:
@@ -854,6 +1007,9 @@ class App(tk.Tk):
             except OSError:
                 self._proc.terminate()
         self._running = False; self._refresh()
+        if self._session_timer_id:
+            self.after_cancel(self._session_timer_id)
+            self._session_timer_id = None
         self._log_line("[GUI] Monitoring stopped.", "warn")
 
     def _stream(self):
@@ -866,8 +1022,65 @@ class App(tk.Tk):
                         "warn"  if any(k in ll for k in ("[!]","disabled","skipping","timeout")) else
                         "info")
                 self.after(0, self._log_line, line, tag)
+                m = re.search(r">> Biome started: (.+)$", line)
+                if m:
+                    biome = m.group(1).strip()
+                    self.after(0, self._inc_biome, biome)
         finally:
             self.after(0, lambda: (setattr(self,"_running",False), self._refresh()))
+
+    def _load_stats(self):
+        try:
+            with open(STATS_FILE) as f:
+                data = json.loads(f.read())
+        except Exception:
+            data = {}
+        counts = {b: data.get("biome_counts", {}).get(b, 0) for b in ALL_BIOMES}
+        total  = data.get("total_biomes", sum(counts.values()))
+        return counts, total
+
+    def _save_stats(self):
+        os.makedirs(os.path.dirname(STATS_FILE), exist_ok=True)
+        try:
+            with open(STATS_FILE) as f:
+                data = json.loads(f.read())
+        except Exception:
+            data = {}
+        data["total_biomes"]  = self._total_biomes
+        data["biome_counts"]  = dict(self._biome_counts)
+        open(STATS_FILE, "w").write(json.dumps(data))
+
+    def _inc_biome(self, biome):
+        key = biome.upper()
+        self._biome_counts[key]  = self._biome_counts.get(key, 0) + 1
+        self._biome_session[key] = self._biome_session.get(key, 0) + 1
+        if key in self._biome_labels:
+            self._biome_labels[key].configure(text=str(self._biome_counts[key]))
+        self._total_biomes += 1
+        self._total_lbl.configure(text=str(self._total_biomes))
+        session_total = sum(self._biome_session.values())
+        self._session_biomes_lbl.configure(text=str(session_total))
+        self._save_stats()
+
+    def _reset_biome_counter(self):
+        for b in ALL_BIOMES:
+            self._biome_session[b] = 0
+        self._session_biomes_lbl.configure(text="0")
+        self._session_lbl.configure(text="00:00:00")
+
+    def _start_session_timer(self):
+        import time
+        self._session_start = time.time()
+        self._tick_session_timer()
+
+    def _tick_session_timer(self):
+        if not self._running or self._session_start is None:
+            return
+        import time
+        elapsed = int(time.time() - self._session_start)
+        h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
+        self._session_lbl.configure(text=f"{h:02d}:{m:02d}:{s:02d}")
+        self._session_timer_id = self.after(1000, self._tick_session_timer)
 
     def _log_line(self, text, tag="info"):
         self._log.configure(state="normal")

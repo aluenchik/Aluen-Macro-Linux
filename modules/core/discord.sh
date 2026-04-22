@@ -89,7 +89,7 @@ send_startup_notification() {
 {
   "embeds": [{
     "title": "Macro Status",
-    "description": "# Macro started! \n\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG",
+    "description": "# Macro started! \n\nJoin our Discord:\nhttps://discord.gg/nQFyFsRPaG",
     "color": 5763719,
     "thumbnail": {"url": "attachment://logo.png"},
     "footer": {
@@ -132,10 +132,10 @@ send_webhook() {
     local title description
     if [ "$event" = "started" ]; then
         title=""
-        description="# BIOME STARTED — ${escaped_biome}\n\n# [Join Server](${escaped_invite})\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG"
+        description="# BIOME STARTED — ${escaped_biome}\n\n# [Join Server](${escaped_invite})\nJoin our Discord:\nhttps://discord.gg/nQFyFsRPaG"
     else
         title=""
-        description="# BIOME ENDED — ${escaped_biome}\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG"
+        description="# BIOME ENDED — ${escaped_biome}\nJoin our Discord:\nhttps://discord.gg/nQFyFsRPaG"
         color="3158064"
     fi
 
@@ -270,7 +270,7 @@ send_stop_notification() {
 {
   "embeds": [{
     "title": "Macro Status",
-    "description": "# Macro stopped!\n\nJoin my Discord:\nhttps://discord.gg/nQFyFsRPaG",
+    "description": "# Macro stopped!\n\nJoin our Discord:\nhttps://discord.gg/nQFyFsRPaG",
     "color": 15158332,
     "thumbnail": {"url": "attachment://logo.png"},
     "fields": [
