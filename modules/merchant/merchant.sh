@@ -39,16 +39,16 @@ _take_screenshot() {
 
 # Move mouse to absolute coords and click.
 # Usage: _mclick X Y WID
-# The click is dispatched into WID via mousedown/mouseup --window —
-# WebView windows (Sober / Roblox) drop xdotool click 1 when the focused
-# window is not the game, e.g. when the terminal running the macro has
-# focus or when pynput grabs the global keyboard.
+# On Wayland+XWayland the Roblox WebView inside Sober only honours
+# mouse clicks when the Sober window is the active X focus. Callers
+# must arrange for _merchant_focus once before the click sequence.
+# xdotool click 1 (XTest) is preferred over mousedown --window
+# (XSendEvent) because WebView filters events with send_event=true
+# as "untrusted" and ignores them.
 _mclick() {
     local x="$1" y="$2" wid="$3"
     xdotool mousemove --sync "$x" "$y" 2>/dev/null
-    xdotool mousedown --window "$wid" 1 2>/dev/null
-    sleep 0.05
-    xdotool mouseup   --window "$wid" 1 2>/dev/null
+    xdotool click 1 2>/dev/null
     sleep 0.15
 }
 
