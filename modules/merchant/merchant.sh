@@ -37,11 +37,18 @@ _take_screenshot() {
 # │           XDOTOOL HELPERS               │
 # └─────────────────────────────────────────┘
 
-# Move mouse and click at absolute screen coordinates.
+# Move mouse to absolute coords and click.
+# Usage: _mclick X Y WID
+# The click is dispatched into WID via mousedown/mouseup --window —
+# WebView windows (Sober / Roblox) drop xdotool click 1 when the focused
+# window is not the game, e.g. when the terminal running the macro has
+# focus or when pynput grabs the global keyboard.
 _mclick() {
-    local x="$1" y="$2"
+    local x="$1" y="$2" wid="$3"
     xdotool mousemove --sync "$x" "$y" 2>/dev/null
-    xdotool click 1 2>/dev/null
+    xdotool mousedown --window "$wid" 1 2>/dev/null
+    sleep 0.05
+    xdotool mouseup   --window "$wid" 1 2>/dev/null
     sleep 0.15
 }
 
@@ -80,14 +87,14 @@ _merchant_use_teleporter() {
     # ── Step 7: Click through dialogue ────────────────────────────
     echo "$ts Clicking through dialogue..."
     for _ in {1..5}; do
-        _mclick "$MERCHANT_CAL_DIALOG_X" "$MERCHANT_CAL_DIALOG_Y"
+        _mclick "$MERCHANT_CAL_DIALOG_X" "$MERCHANT_CAL_DIALOG_Y" "$wid"
         sleep 0.3
     done
     sleep 0.3
 
     # ── Step 8: Open shop ─────────────────────────────────────────
     echo "$ts Clicking Shop button..."
-    _mclick "$MERCHANT_CAL_SHOP_X" "$MERCHANT_CAL_SHOP_Y"
+    _mclick "$MERCHANT_CAL_SHOP_X" "$MERCHANT_CAL_SHOP_Y" "$wid"
     sleep 1.0
 }
 
@@ -152,7 +159,7 @@ _merchant_buy_from_shop() {
     while IFS='|' read -r name cx cy; do
         [ -z "$name" ] && continue
         echo "$ts   Buying: $name at ($cx, $cy)"
-        _mclick "$cx" "$cy"
+        _mclick "$cx" "$cy" "$wid"
         sleep 0.6
         # Set to max if configured for this item
         local _use_max=false
@@ -161,10 +168,10 @@ _merchant_buy_from_shop() {
         done
         if $_use_max && [ "${MERCHANT_CAL_MAX_X:-0}" -ne 0 ]; then
             echo "$ts   Setting to max..."
-            _mclick "$MERCHANT_CAL_MAX_X" "$MERCHANT_CAL_MAX_Y"
+            _mclick "$MERCHANT_CAL_MAX_X" "$MERCHANT_CAL_MAX_Y" "$wid"
             sleep 0.3
         fi
-        _mclick "$MERCHANT_CAL_BUY_X" "$MERCHANT_CAL_BUY_Y"
+        _mclick "$MERCHANT_CAL_BUY_X" "$MERCHANT_CAL_BUY_Y" "$wid"
         echo "$ts   Purchased: $name"
         sleep 0.5
     done <<< "$results"
@@ -244,7 +251,7 @@ _merchant_run() {
     else
         echo "$ts No merchant found (timeout — merchant may not be active)"
         echo "$ts Closing inventory..."
-        _mclick "$MERCHANT_CAL_INV_X" "$MERCHANT_CAL_INV_Y"
+        _mclick "$MERCHANT_CAL_INV_X" "$MERCHANT_CAL_INV_Y" "$wid"
         sleep 0.4
     fi
 

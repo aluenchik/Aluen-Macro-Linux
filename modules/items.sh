@@ -25,18 +25,18 @@ _use_item_from_inventory() {
     _merchant_focus "$wid"
 
     echo "[$(date '+%H:%M:%S')] $pfx Opening inventory..."
-    _mclick "$MERCHANT_CAL_INV_X" "$MERCHANT_CAL_INV_Y"
+    _mclick "$MERCHANT_CAL_INV_X" "$MERCHANT_CAL_INV_Y" "$wid"
     sleep 1.5
 
     echo "[$(date '+%H:%M:%S')] $pfx Clicking Items tab..."
-    _mclick "$MERCHANT_CAL_ITEMS_TAB_X" "$MERCHANT_CAL_ITEMS_TAB_Y"
+    _mclick "$MERCHANT_CAL_ITEMS_TAB_X" "$MERCHANT_CAL_ITEMS_TAB_Y" "$wid"
     sleep 0.8
 
     # Re-focus before text input — inventory animation may have broken focus
     _merchant_focus "$wid"
 
     echo "[$(date '+%H:%M:%S')] $pfx Searching: $item_name"
-    _mclick "$MERCHANT_CAL_SEARCH_X" "$MERCHANT_CAL_SEARCH_Y"
+    _mclick "$MERCHANT_CAL_SEARCH_X" "$MERCHANT_CAL_SEARCH_Y" "$wid"
     sleep 0.5
 
     xdotool key --window "$wid" --clearmodifiers ctrl+a 2>/dev/null
@@ -48,16 +48,16 @@ _use_item_from_inventory() {
     _merchant_focus "$wid"
 
     echo "[$(date '+%H:%M:%S')] $pfx Selecting item..."
-    _mclick "$MERCHANT_CAL_ITEM_X" "$MERCHANT_CAL_ITEM_Y"
+    _mclick "$MERCHANT_CAL_ITEM_X" "$MERCHANT_CAL_ITEM_Y" "$wid"
     sleep 0.5
 
     echo "[$(date '+%H:%M:%S')] $pfx Clicking Use..."
-    _mclick "$MERCHANT_CAL_USE_X" "$MERCHANT_CAL_USE_Y"
+    _mclick "$MERCHANT_CAL_USE_X" "$MERCHANT_CAL_USE_Y" "$wid"
     sleep 1.0
 
-    
+
     echo "[$(date '+%H:%M:%S')] $pfx Closing inventory..."
-    _mclick "$MERCHANT_CAL_INV_X" "$MERCHANT_CAL_INV_Y"
+    _mclick "$MERCHANT_CAL_INV_X" "$MERCHANT_CAL_INV_Y" "$wid"
     sleep 0.4
 }
 

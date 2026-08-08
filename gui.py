@@ -3,12 +3,17 @@
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
-import subprocess, threading, os, re, webbrowser, json, urllib.request, signal
+import subprocess, threading, os, re, sys, webbrowser, json, urllib.request, signal
 try:
     from PIL import Image, ImageTk
     _PIL = True
 except ImportError:
     _PIL = False
+try:
+    from pynput import keyboard as _kb
+    _PYNPUT = True
+except ImportError:
+    _PYNPUT = False
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -17,7 +22,10 @@ _CORE_MACRO   = os.path.join(SCRIPT_DIR, "modules", "core", "macro.sh")
 CONFIG_FILE    = os.path.expanduser("~/.config/sols_rng/config.conf")
 TEMPLATES_FILE = os.path.expanduser("~/.config/sols_rng/cal_templates.json")
 STATS_FILE     = os.path.expanduser("~/.config/sols_rng/stats.json")
-LOGO_PNG    = os.path.join(SCRIPT_DIR, "modules", "core", "logo.png")
+LOGO_PNG       = os.path.join(SCRIPT_DIR, "modules", "core", "logo.png")
+LIVE_CONF      = "/tmp/sols_rng_live.conf"
+
+_LIVE_KEYS = ("MERCHANT_ENABLED", "STRANGE_CONTROLLER_ENABLED", "BIOME_RANDOMIZER_ENABLED")
 
 def _read_version() -> str:
     for path in (_CORE_MACRO, MACRO_SH):
@@ -61,7 +69,8 @@ JESTER_ALL_ITEMS = [
 
 ALL_BIOMES = [
     "WINDY","SNOWY","RAINY","SANDSTORM","HELL","HEAVEN",
-    "STARFALL","CORRUPTION","NULL","EGGLAND",
+    "STARFALL","CORRUPTION","NULL","GLITCHED","DREAMSPACE","CYBERSPACE",
+    "SINGULARITY",
 ]
 
 # ── Palette ───────────────────────────────────────────────────────────────────
@@ -102,13 +111,20 @@ def read_config():
 
 def read_arrays():
     arrays = {}
-    for m in re.finditer(r'^(\w+)=\((.*?)\)', _raw(), re.MULTILINE | re.DOTALL):
+    # Tolerate optional `declare -a` / `declare -ag` prefix — bash's
+    # `declare -p` and some hand-edited configs use it. Without this,
+    # `declare -ag PING_FOR=(...)` in the file silently fails to parse.
+    for m in re.finditer(r'^(?:declare\s+(?:-[agA]+\s+)+)?(\w+)=\((.*?)\)',
+                         _raw(), re.MULTILINE | re.DOTALL):
         arrays[m.group(1)] = re.findall(r'"([^"]*)"', m.group(2))
     return arrays
 
 def save_scalar(key, value):
     content = _raw()
-    line = f'{key}="{value}"'
+    # Escape regex backreference markers in value so \1, \g<...> etc. don't get
+    # interpreted by re.sub.
+    safe_value = re.sub(r'\\', r'\\\\', str(value))
+    line = f'{key}="{safe_value}"'
     p1 = re.compile(rf'^{re.escape(key)}="[^"]*"', re.MULTILINE)
     p2 = re.compile(rf'^{re.escape(key)}=[^\n]*',  re.MULTILINE)
     if p1.search(content):   content = p1.sub(line, content)
@@ -181,8 +197,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Aluen's Macro")
-        self.geometry("880x600")
-        self.minsize(760, 500)
+        self.geometry("960x650")
+        self.minsize(820, 620)
         self.configure(bg=BG)
         self.option_add("*tearOff", False)
 
@@ -202,12 +218,45 @@ class App(tk.Tk):
         _ico           = _load_img(32)
         if _ico: self.iconphoto(True, _ico)
 
+        self._sudo_ok = False        # True if passwordless sudo is available
+        self._sudo_marker = "/tmp/sols_rng_sudo_ok"
+        self._sudo_refresh_id = None # after() handle for timestamp refresher
+        self._sudo_refresh_interval = 240_000  # 4 min (timestamp default = 5 min)
+
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.bind("<F1>", lambda e: self._start())
-        self.bind("<F2>", lambda e: self._stop())
-        self.bind("<Control-z>", lambda e: self._stop())
+        self.bind_all("<F1>", lambda e: self._start())
+        self.bind_all("<F2>", lambda e: self._stop())
+        self.bind_all("<Control-z>", lambda e: self._stop())
         threading.Thread(target=self._check_update, daemon=True).start()
+        # Probe sudo capability off the UI thread (non-blocking). The banner
+        # is shown once the probe finishes; user can choose to grant or skip.
+        threading.Thread(target=self._probe_sudo, daemon=True).start()
+
+        # Global hotkeys (work even when the GUI window is not focused, e.g.
+        # while Roblox is in the foreground). pynput runs in its own thread
+        # and dispatches back to the Tk main thread via after().
+        self._kbd_listener = None
+        if _PYNPUT:
+            try:
+                self._kbd_listener = _kb.Listener(
+                    on_press=self._on_global_key,
+                    daemon=True,
+                )
+                self._kbd_listener.start()
+            except Exception as e:
+                print(f"[GUI] Failed to start global keyboard listener: {e}")
+                self._kbd_listener = None
+
+    def _on_global_key(self, key):
+        """Global hotkey handler. Runs on pynput's thread — marshal to Tk."""
+        try:
+            if key == _kb.Key.f1:
+                self.after(0, self._start)
+            elif key == _kb.Key.f2:
+                self.after(0, self._stop)
+        except Exception:
+            pass
 
     # ── Layout ────────────────────────────────────────────────────────────────
     def _build(self):
@@ -294,15 +343,22 @@ class App(tk.Tk):
         tk.Label(foot, text=f"v{VERSION}", font=("Segoe UI", 8),
                  bg=BG2, fg=FG2).pack(side="left", padx=12)
 
+        # Sudo status (clickable to revoke)
+        self._sudo_lbl = tk.Label(foot, text="", font=("Segoe UI", 8),
+                                  bg=BG2, fg=FG2, cursor="hand2")
+        self._sudo_lbl.pack(side="right", padx=12)
+        self._sudo_lbl.bind("<Button-1>", lambda e: self._revoke_sudo())
+        self._refresh_sudo_label()
+
     # ── Tab 1 ─────────────────────────────────────────────────────────────────
     def _tab_main(self, p):
         body = tk.Frame(p, bg=BG)
         body.pack(fill="both", expand=True, padx=14, pady=12)
 
-        # Left panel
+        # Left panel — fixed width, no scroll (content fits in normal window sizes).
         left = tk.Frame(body, bg=BG, width=265)
+        left.pack_propagate(False)   # freeze width BEFORE pack
         left.pack(side="left", fill="y", padx=(0,14))
-        left.pack_propagate(False)
 
         self._sec(left, "Modules")
         self._toggle_row(left, "Merchant",           "MERCHANT_ENABLED")
@@ -337,15 +393,18 @@ class App(tk.Tk):
         grid = tk.Frame(left, bg=BG)
         grid.pack(fill="x")
         self._biome_labels = {}          # biome → total_lbl
+        SUPER_RARE = {"GLITCHED", "DREAMSPACE", "CYBERSPACE", "SINGULARITY"}
         for i, biome in enumerate(ALL_BIOMES):
             r, c = divmod(i, 2)
             cell = tk.Frame(grid, bg=BG)
             cell.grid(row=r, column=c, sticky="ew", padx=(0, 8), pady=1)
             grid.columnconfigure(c, weight=1)
-            tk.Label(cell, text=biome, font=FS, bg=BG, fg=FG2,
+            name_fg = ACCENT if biome in SUPER_RARE else FG2
+            cnt_fg  = ACCENT if biome in SUPER_RARE else FG
+            tk.Label(cell, text=biome, font=FS, bg=BG, fg=name_fg,
                      anchor="w").pack(side="left")
             lbl_t = tk.Label(cell, text=str(self._biome_counts.get(biome, 0)),
-                             font=FS, bg=BG, fg=FG, anchor="e")
+                             font=FS, bg=BG, fg=cnt_fg, anchor="e")
             lbl_t.pack(side="right")
             self._biome_labels[biome] = lbl_t
 
@@ -426,9 +485,17 @@ class App(tk.Tk):
 
         self._sec(q, "Biome Notifications", **px)
         self._sec2(q, "Mute (checked = won't notify)", **px)
-        self._biome_cbs(q, "NOTIFY_ONLY", invert=True, **px)
+        # Biomes that always ping → never muteable. Kept in sync with
+        # the bash core's `PING_FOR` defaults in modules/core/settings.sh.
+        # If the user's config still has an older PING_FOR (missing
+        # SINGULARITY), we union with the full default so legacy configs
+        # still hide these from the mute grid.
+        ping_for = {b.upper() for b in self._arrs.get("PING_FOR", [])}
+        ping_default = {"GLITCHED", "DREAMSPACE", "CYBERSPACE", "SINGULARITY"}
+        self._biome_cbs(q, "NOTIFY_ONLY", invert=True,
+                        exclude=ping_for | ping_default, **px)
         self._sec2(q, "Ping for biomes", **px)
-        self._biome_cbs_ro(q, {"GLITCHED","DREAMSPACE","CYBERSPACE"}, **px)
+        self._biome_cbs_ro(q, ping_for | ping_default, **px)
 
         _btn(q, "  Save all settings  ", self._save,
              bg=ACCENT, fg="#1e1e2e", font=FB, padx=14, pady=7
@@ -921,13 +988,16 @@ class App(tk.Tk):
             cb.grid(row=0, column=i, sticky="w", padx=4)
             cb.bind("<Button-1>", lambda e: "break")  # read-only
 
-    def _biome_cbs(self, p, key, invert=False, padx=0, pady=0):
+    def _biome_cbs(self, p, key, invert=False, padx=0, pady=0, exclude=None):
         sel = {s.upper() for s in self._arrs.get(key,[])}
         if invert: self._inv.add(key)
         self._avars[key] = {}
+        exclude = {b.upper() for b in (exclude or [])}
         grid = tk.Frame(p, bg=BG)
         grid.pack(fill="x", padx=padx, pady=(0,6))
         for i, biome in enumerate(ALL_BIOMES):
+            if biome in exclude:
+                continue
             checked = (bool(sel) and biome not in sel) if invert else (biome in sel)
             v = tk.BooleanVar(value=checked)
             self._avars[key][biome] = v
@@ -986,12 +1056,39 @@ class App(tk.Tk):
                    [f"{it['name']}|{it['cooldown']}" for it in self._custom_items])
         self._log_line("[GUI] Settings saved.", "ok")
 
+    def _write_live_conf(self, *_):
+        if not self._running or self._proc is None:
+            return
+        lines = []
+        for k in _LIVE_KEYS:
+            v = self._vars.get(k)
+            if v is not None:
+                lines.append(f'{k}={"true" if v.get() else "false"}')
+        try:
+            with open(LIVE_CONF, "w") as f:
+                f.write("\n".join(lines) + "\n")
+            os.kill(self._proc.pid, signal.SIGUSR1)
+        except OSError:
+            pass
+
+    def _remove_live_conf(self):
+        try:
+            os.remove(LIVE_CONF)
+        except OSError:
+            pass
+
     def _start(self):
         if self._running: return
         if not os.path.exists(MACRO_SH):
             messagebox.showerror("Error", f"macro.sh not found:\n{MACRO_SH}"); return
         self._save(); self._clear_log(); self._reset_biome_counter()
+        # Attach live-conf traces to module toggles
+        for k in _LIVE_KEYS:
+            v = self._vars.get(k)
+            if v is not None:
+                v.trace_add("write", self._write_live_conf)
         self._running = True; self._refresh()
+        self._write_live_conf()
         self._proc = subprocess.Popen(
             ["bash", MACRO_SH, "--monitor"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1001,6 +1098,14 @@ class App(tk.Tk):
         self._start_session_timer()
 
     def _stop(self):
+        # Remove live-conf traces
+        for k in _LIVE_KEYS:
+            v = self._vars.get(k)
+            if v is not None:
+                for tid in v.trace_info():
+                    try: v.trace_remove(tid[0], tid[1])
+                    except Exception: pass
+        self._remove_live_conf()
         if self._proc and self._proc.poll() is None:
             try:
                 os.killpg(os.getpgid(self._proc.pid), signal.SIGTERM)
@@ -1035,8 +1140,16 @@ class App(tk.Tk):
                 data = json.loads(f.read())
         except Exception:
             data = {}
-        counts = {b: data.get("biome_counts", {}).get(b, 0) for b in ALL_BIOMES}
-        total  = data.get("total_biomes", sum(counts.values()))
+        # Defensive: stats.json can be empty/null or have wrong shape.
+        if not isinstance(data, dict):
+            data = {}
+        biome_counts = data.get("biome_counts") or {}
+        if not isinstance(biome_counts, dict):
+            biome_counts = {}
+        counts = {b: biome_counts.get(b, 0) for b in ALL_BIOMES}
+        total  = data.get("total_biomes")
+        if not isinstance(total, int):
+            total = sum(counts.values())
         return counts, total
 
     def _save_stats(self):
@@ -1111,7 +1224,10 @@ class App(tk.Tk):
                 import json as _json
                 data = _json.loads(r.read().decode())
             latest = data.get("tag_name", "").lstrip("v")
-            if latest and latest != VERSION:
+            def _ver(s):
+                try: return tuple(int(x) for x in s.split("."))
+                except ValueError: return (0,)
+            if latest and _ver(latest) > _ver(VERSION):
                 self.after(0, self._show_update_banner, latest)
         except Exception:
             pass
@@ -1127,8 +1243,271 @@ class App(tk.Tk):
                  "https://github.com/aluenchik/Aluen-Macro-Linux/releases"),
              bg="#1e1e2e", fg=YELLOW, font=FS, padx=10, pady=2).pack(side="right", padx=8)
 
+    # ── sudo bootstrap ────────────────────────────────────────────────────────
+    # Background probe → on success, mark _sudo_ok silently. On failure,
+    # show a banner asking the user to grant sudo (optional — fishing and
+    # some screenshot paths need it).
+    def _probe_sudo(self):
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "true"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=3,
+            )
+            if r.returncode == 0:
+                # Refresh timestamp so subsequent calls stay cached for a while.
+                subprocess.run(["sudo", "-n", "-v"], timeout=3,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self._sudo_ok = True
+                self._mark_sudo()
+                return
+        except Exception:
+            pass
+        # Probe failed — surface a banner asking the user to grant sudo.
+        self.after(0, self._show_sudo_banner)
+
+    def _show_sudo_banner(self):
+        bar = tk.Frame(self, bg=YELLOW, pady=4)
+        bar.pack(fill="x", before=self.winfo_children()[1])
+        tk.Label(bar,
+                 text="Sudo access recommended (needed for screen capture on Wayland)",
+                 font=FS, bg=YELLOW, fg="#1e1e2e").pack(side="left", padx=12)
+        _btn(bar, "Skip", bar.destroy,
+             bg=YELLOW, fg="#1e1e2e", font=FS, padx=8, pady=2
+             ).pack(side="right", padx=(0,4))
+        _btn(bar, "Grant sudo", lambda: (bar.destroy(), self._request_sudo_password()),
+             bg="#1e1e2e", fg=YELLOW, font=FS, padx=10, pady=2
+             ).pack(side="right", padx=8)
+
+    def _request_sudo_password(self):
+        """Ask the user for the sudo password in a modal dialog and run sudo -v.
+
+        After success, the timestamp is cached (default 5 min) so subsequent
+        grim/screenshot calls in fishing_vision.py don't re-prompt.
+
+        Safe to call from a Tk callback (e.g. <Button-1>): the dialog body is
+        built and grab_set is deferred via after_idle so the Toplevel is
+        fully mapped by the time the grab fires. Synchronous grab_set inside
+        a Button-1 handler fails with "window not viewable".
+        """
+        dlg = tk.Toplevel(self)
+        dlg.title("Grant sudo")
+        dlg.configure(bg=BG)
+        dlg.transient(self)
+        dlg.resizable(False, False)
+        # Make sure geometry/visibility are processed before we grab.
+        dlg.update_idletasks()
+
+        def _grab():
+            try:
+                dlg.wait_visibility()
+                dlg.grab_set()
+                pw_entry.focus_set()
+            except tk.TclError:
+                pass
+        dlg.after_idle(_grab)
+
+        frm = tk.Frame(dlg, bg=BG, padx=20, pady=16)
+        frm.pack(fill="both", expand=True)
+        tk.Label(frm, text="Grant sudo for screen capture",
+                 font=FB, bg=BG, fg=FG).pack(anchor="w")
+        tk.Label(frm,
+                 text="Used by fishing & screenshot modules on Wayland.\n"
+                      "Your password is not stored — only the sudo timestamp.",
+                 font=FS, bg=BG, fg=FG2, justify="left"
+                 ).pack(anchor="w", pady=(4, 12))
+
+        pw_var = tk.StringVar()
+        pw_frame, pw_entry = _entry(frm, pw_var, width=36, show="•")
+        pw_frame.pack(fill="x", pady=(0, 4))
+        # pw_entry.focus_set() is called by _grab after the window is mapped.
+
+        status = tk.Label(frm, text="", font=FS, bg=BG, fg=YELLOW)
+        status.pack(anchor="w", pady=(0, 8))
+
+        def _submit():
+            pw = pw_var.get()
+            if not pw:
+                status.configure(text="Enter your password.", fg=YELLOW)
+                return
+            status.configure(text="Verifying...", fg=FG2)
+            def _run():
+                try:
+                    r = subprocess.run(
+                        ["sudo", "-S", "-v"],
+                        input=pw + "\n", text=True,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        timeout=10,
+                    )
+                    # sudo -S writes the prompt to stderr; ignore that.
+                    # Returncode 0 means password was accepted.
+                    ok = r.returncode == 0
+                except Exception as ex:
+                    ok = False
+                    err = str(ex)
+                else:
+                    err = ""
+                def _done():
+                    if ok:
+                        self._sudo_ok = True
+                        self._mark_sudo()
+                        dlg.destroy()
+                    else:
+                        status.configure(text="Wrong password or sudo not allowed.", fg=RED)
+                self.after(0, _done)
+            threading.Thread(target=_run, daemon=True).start()
+
+        btn_row = tk.Frame(frm, bg=BG)
+        btn_row.pack(fill="x", pady=(4, 0))
+        _btn(btn_row, "Cancel", dlg.destroy, font=FS, padx=12, pady=4
+             ).pack(side="right", padx=(8, 0))
+        _btn(btn_row, "OK", _submit, bg=ACCENT, fg="#1e1e2e", font=FB,
+             padx=14, pady=4).pack(side="right")
+
+        pw_entry.bind("<Return>", lambda e: _submit())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+
+    def _mark_sudo(self):
+        """Touch the marker file so bash modules know sudo is cached.
+
+        Also schedules a recurring `sudo -n -v` call to refresh the timestamp
+        every ~4 minutes — keeps fishing/screenshot working unattended for
+        days without re-prompting for the password.
+        """
+        try:
+            with open(self._sudo_marker, "w") as f:
+                f.write(str(os.getpid()))
+        except OSError:
+            pass
+        self._refresh_sudo_label()
+        self._log_line(f"[Sudo] Cached (PID={os.getpid()}). Refreshing every "
+                       f"{self._sudo_refresh_interval // 1000}s so it never "
+                       f"expires.", "ok")
+        self._schedule_sudo_refresh()
+
+    def _refresh_sudo_label(self):
+        """Update the clickable footer indicator."""
+        if not hasattr(self, "_sudo_lbl"):
+            return
+        if self._sudo_ok:
+            self._sudo_lbl.configure(text="● Sudo cached (click to revoke)",
+                                     fg=GREEN)
+        else:
+            self._sudo_lbl.configure(text="○ Sudo not granted (click to grant)",
+                                     fg=FG2)
+
+    def _revoke_sudo(self):
+        """Drop sudo cache, marker file, and stop the refresher.
+
+        If sudo isn't currently granted, opens the password dialog instead
+        so the user can grant it by clicking the indicator.
+
+        Best-effort: also calls `sudo -K` to invalidate the timestamp so
+        any subsequent `sudo grim` from the running macro will fail
+        immediately rather than hanging on a password prompt.
+        """
+        if not self._sudo_ok:
+            # Nothing cached — clicking the indicator grants instead of revokes.
+            self._request_sudo_password()
+            return
+
+        # Stop the timestamp refresher first.
+        if self._sudo_refresh_id is not None:
+            try: self.after_cancel(self._sudo_refresh_id)
+            except Exception: pass
+            self._sudo_refresh_id = None
+        self._sudo_ok = False
+
+        # Remove marker file so bash modules know.
+        try: os.remove(self._sudo_marker)
+        except OSError: pass
+
+        # Invalidate sudo timestamp immediately. -K clears the cached
+        # credentials so the next sudo call fails fast (no prompt).
+        try:
+            subprocess.run(["sudo", "-K"], timeout=5,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+        # Also kill any stale sudo askpass helper / dialogs that may be open.
+        try:
+            subprocess.run(["pkill", "-f", "sudo.*askpass"],
+                           timeout=2, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+        self._refresh_sudo_label()
+        self._log_line("[Sudo] Access revoked. Timestamp cleared.", "warn")
+
+    def _schedule_sudo_refresh(self):
+        """Schedule the next sudo -v refresh on the Tk main loop."""
+        if self._sudo_refresh_id is not None:
+            try:
+                self.after_cancel(self._sudo_refresh_id)
+            except Exception:
+                pass
+        self._sudo_refresh_id = self.after(
+            self._sudo_refresh_interval, self._refresh_sudo_timestamp)
+
+    def _refresh_sudo_timestamp(self):
+        """Background thread target: run sudo -n -v to extend the cache."""
+        self._sudo_refresh_id = None
+        if not self._sudo_ok:
+            return
+        def _run():
+            try:
+                r = subprocess.run(
+                    ["sudo", "-n", "-v"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=5,
+                )
+                if r.returncode == 0 and self._sudo_ok:
+                    self.after(0, lambda: self._log_line(
+                        "[Sudo] Timestamp refreshed — AFK safe.", "info"))
+                    # Reschedule next refresh; keep the chain alive.
+                    self.after(0, self._schedule_sudo_refresh)
+                else:
+                    # Cache lost (password policy changed, sudoers rotated, etc.).
+                    # Drop the marker and surface a banner so the user can re-grant.
+                    self._sudo_ok = False
+                    try: os.remove(self._sudo_marker)
+                    except OSError: pass
+                    self.after(0, lambda: self._log_line(
+                        "[Sudo] Cache expired — re-grant required.", "warn"))
+                    self.after(0, self._refresh_sudo_label)
+                    self.after(0, self._show_sudo_banner)
+            except Exception:
+                # Transient error — try again next tick.
+                if self._sudo_ok:
+                    self.after(0, self._schedule_sudo_refresh)
+        threading.Thread(target=_run, daemon=True).start()
+
     def _on_close(self):
-        self._stop(); self.destroy()
+        self._stop()
+        if self._sudo_refresh_id is not None:
+            try: self.after_cancel(self._sudo_refresh_id)
+            except Exception: pass
+            self._sudo_refresh_id = None
+        if self._kbd_listener is not None:
+            try: self._kbd_listener.stop()
+            except Exception: pass
+            self._kbd_listener = None
+        try:
+            os.remove(self._sudo_marker)
+        except OSError:
+            pass
+        self.destroy()
 
 if __name__ == "__main__":
-    App().mainloop()
+    app = App()
+    try:
+        app.mainloop()
+    except KeyboardInterrupt:
+        # Ctrl+C in terminal — exit cleanly without traceback
+        try:
+            app._on_close()
+        except Exception:
+            pass
+        sys.exit(0)

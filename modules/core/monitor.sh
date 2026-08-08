@@ -35,11 +35,25 @@ action_queue_run() {
     esac
 }
 
+_LIVE_RELOAD=false
+
 ticks_run() {
     local log_file="$1"
     local now; now=$(date +%s)
 
+    if $_LIVE_RELOAD; then
+        _LIVE_RELOAD=false
+        [ -f /tmp/sols_rng_live.conf ] && source /tmp/sols_rng_live.conf
+        echo "[$(date '+%H:%M:%S')] [Live] Module settings reloaded"
+    fi
+
     antiafk_tick
+
+    # Defensive: source config without `declare -ga CUSTOM_USE_ITEMS=()` would
+    # leave it as a plain string, breaking `${ARR[@]}` below.
+    if ! declare -p CUSTOM_USE_ITEMS &>/dev/null; then
+        declare -ga CUSTOM_USE_ITEMS=()
+    fi
 
     if [[ "$MERCHANT_ENABLED" == "true" ]]; then
         (( now - MERCHANT_LAST < MERCHANT_INTERVAL )) || { MERCHANT_LAST=$now; action_queue_push "merchant"; }
@@ -209,7 +223,63 @@ start_monitoring() {
     }
 
     # Trap both Ctrl+C (INT) and SIGTERM (sent by GUI stop button)
+    # SIGUSR1 = live reload of module toggles from GUI
+    #
+    # `read -t 2` on a FIFO blocks even when a signal arrives — Bash does
+    # not interrupt built-in `read` on signal delivery. To make Stop instant,
+    # we run the reader in a background child. SIGALRM interrupts the
+    # blocking read inside the child and it exits with rc=142, freeing the
+    # parent immediately.
+    _reader_pid=""
+    _stop_reader() {
+        if [ -n "$_reader_pid" ] && kill -0 "$_reader_pid" 2>/dev/null; then
+            kill -ALRM "$_reader_pid" 2>/dev/null
+            # Give the child up to ~500ms to exit cleanly.
+            local i=0
+            while [ $i -lt 10 ] && kill -0 "$_reader_pid" 2>/dev/null; do
+                sleep 0.05
+                i=$((i + 1))
+            done
+            kill -9 "$_reader_pid" 2>/dev/null
+            wait "$_reader_pid" 2>/dev/null
+        fi
+        _reader_pid=""
+    }
+    cleanup() {
+        $cleanup_done && return
+        cleanup_done=true
+
+        monitoring_active=false
+        _stop_reader
+
+        # Release any keys that may be held (e.g. merchant walk-away)
+        if command -v xdotool &>/dev/null; then
+            xdotool keyup s 2>/dev/null
+            xdotool keyup space 2>/dev/null
+        fi
+
+        # Kill any child xdotool/tail processes still running
+        pkill -P $$ 2>/dev/null || true
+
+        [ -n "$tail_pid" ] && kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null
+
+        exec 3>&- 2>/dev/null
+        exec 3<&- 2>/dev/null
+        rm -f "$fifo" 2>/dev/null
+        rm -f "${fifo}.line" 2>/dev/null
+
+        echo ""
+        echo "[*] Stopping monitoring..."
+        local session_end; session_end=$(date +%s)
+        local session_duration=$(( session_end - session_start ))
+        echo "[*] Sending stop notification..."
+        send_stop_notification "$session_duration"
+        echo "[✓] Monitoring stopped"
+        echo ""
+    }
+
     trap cleanup INT TERM
+    trap '_LIVE_RELOAD=true' USR1
 
     start_tail
     exec 3<> "$fifo"
@@ -217,10 +287,37 @@ start_monitoring() {
     # Record session start time
     local session_start=$(date +%s)
 
-    while $monitoring_active; do
-        if IFS= read -r -t 2 line <&3; then
-            [ -z "$line" ] && continue
+    # _read_one_line: read one line from fd $1 with 2s timeout, write to stdout.
+    # SIGALRM (sent by cleanup) interrupts the blocking read — child exits 142.
+    _read_one_line() {
+        local _fd="$1"
+        local _line=""
+        IFS= read -r -t 2 -u "$_fd" _line
+        local _rc=$?
+        [ $_rc -eq 0 ] && printf '%s\n' "$_line"
+        return $_rc
+    }
 
+    while $monitoring_active; do
+        local line=""
+
+        # Run the reader in a background subshell. stdout is redirected to a
+        # temp file so the parent can pick it up after wait returns.
+        _reader_pid=""
+        : > "${fifo}.line"
+        _read_one_line 3 > "${fifo}.line" 2>/dev/null &
+        _reader_pid=$!
+        # wait blocks until the reader exits (line read → rc=0, timeout → rc=142,
+        # or SIGALRM-interrupted read → rc=142). In all cases we drop back here
+        # immediately — no 2-second lag on Stop.
+        wait "$_reader_pid" 2>/dev/null
+        _reader_pid=""
+
+        if [ -s "${fifo}.line" ]; then
+            line=$(cat "${fifo}.line")
+        fi
+
+        if [ -n "$line" ]; then
             local raw_biome
             raw_biome=$(parse_biome_from_line "$line")
             [ -z "$raw_biome" ] && continue

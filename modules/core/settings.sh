@@ -22,7 +22,7 @@ declare -gA BIOME_COLORS=(
     ["GLITCHED"]="2152512"    # #20D840 — neon green
     ["DREAMSPACE"]="14700728" # #E050B8 — pink/magenta
     ["CYBERSPACE"]="51448"    # #00C8F8 — electric cyan
-    ["EGGLAND"]="6860848"     # #68B030 — grass green
+    ["SINGULARITY"]="3306240" # #320C00 — deep ember (black-hole orange-black)
 )
 
 declare -gA BIOME_EMOJIS=(
@@ -30,7 +30,7 @@ declare -gA BIOME_EMOJIS=(
     ["SANDSTORM"]="🏜️" ["HELL"]="🔥"   ["HEAVEN"]="✨"
     ["STARFALL"]="🌠"  ["CORRUPTION"]="☠️" ["NULL"]="🌑"
     ["GLITCHED"]="⚡"  ["DREAMSPACE"]="🌸" ["CYBERSPACE"]="🤖"
-    ["EGGLAND"]="🥚"
+    ["SINGULARITY"]="🕳️"
 )
 
 # ┌─────────────────────────────────────────┐
@@ -77,7 +77,7 @@ NOTIFY_ONLY=(
     "STARFALL"
     "DREAMSPACE"
     "CYBERSPACE"
-    "EGGLAND"
+    "SINGULARITY"
 )
 
 # Biomes that trigger role ping
@@ -85,6 +85,7 @@ PING_FOR=(
     "GLITCHED"
     "DREAMSPACE"
     "CYBERSPACE"
+    "SINGULARITY"
 )
 
 # ┌─────────────────────────────────────────┐
@@ -161,6 +162,23 @@ load_config() {
     fi
     # shellcheck source=/dev/null
     source "$CONFIG_FILE"
+
+    # Auto-merge: if a known biome is missing from a notify/ping array,
+    # append it. This keeps user-customised configs up to date when a new
+    # biome is added to the codebase.
+    _ensure_in_array() {
+        local arr_name="$1"
+        local needle="$2"
+        local -a current
+        eval "current=( \"\${${arr_name}[@]}\" )"
+        local item
+        for item in "${current[@]}"; do
+            [ "$item" = "$needle" ] && return 0
+        done
+        eval "${arr_name}+=(\"\$needle\")"
+    }
+    _ensure_in_array NOTIFY_ONLY SINGULARITY
+    _ensure_in_array PING_FOR    SINGULARITY
 }
 
 # ┌─────────────────────────────────────────┐
